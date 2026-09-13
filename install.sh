@@ -5,7 +5,22 @@
 
 set -euo pipefail
 
-PY="${NA_PYTHON:-$(command -v python3 || command -v python)}"
+# Resolve a Python that actually runs. On Windows `command -v python3` finds
+# the Microsoft Store stub, which exits non-zero and would silence this script.
+na_python() {
+  local c
+  for c in "${NA_PYTHON:-}" python3 python py; do
+    [ -n "$c" ] || continue
+    # Existence is not the test — the Store stub exists and still does nothing.
+    # Only an interpreter that runs a statement and exits 0 is accepted.
+    if "$c" -c 'import sys' >/dev/null 2>&1; then
+      command -v "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+PY="$(na_python)" || { echo "never-again: no working python found" >&2; exit 1; }
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$(cd "${1:-$PWD}" && pwd)"

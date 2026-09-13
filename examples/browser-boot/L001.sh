@@ -3,10 +3,31 @@
 # Register: PreToolUse, matcher "Bash", if "Bash(git commit *)"
 set -uo pipefail
 
-PY="${NA_PYTHON:-$(command -v python3 || command -v python)}"
-
 ID="L001"
 RULE="Boot the build in a real browser before committing (run .claude/hooks/na/L001-mark-boot.sh)"
+
+# Resolve a Python that actually runs. On Windows `command -v python3` finds
+# the Microsoft Store stub, which exits non-zero and would silence this script.
+na_python() {
+  local c
+  for c in "${NA_PYTHON:-}" python3 python py; do
+    [ -n "$c" ] || continue
+    # Existence is not the test — the Store stub exists and still does nothing.
+    # Only an interpreter that runs a statement and exits 0 is accepted.
+    if "$c" -c 'import sys' >/dev/null 2>&1; then
+      command -v "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+if ! PY="$(na_python)"; then
+  # There is no interpreter left to build JSON with, so hand-write it. The tool
+  # call still proceeds, but a silently dead hook is exactly the failure this
+  # project exists to prevent, so say so where the user will see it.
+  printf '{"systemMessage":"never-again: no working python found; hook %s did not run. Install Python 3.7+ or set NA_PYTHON."}\n' "$ID"
+  exit 0
+fi
 
 ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 STATE="$ROOT/.claude/never-again/state.json"

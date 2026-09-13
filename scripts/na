@@ -1,5 +1,17 @@
-#!/usr/bin/env python3
-"""na — never-again local CLI.
+#!/bin/sh
+""":"
+# Re-exec under a Python that actually runs. `env python3` finds the Microsoft
+# Store stub on Windows, which exits without running anything.
+for c in ${NA_PYTHON:-} python3 python py; do
+  # Existence is not the test — run a statement and require exit 0.
+  if "$c" -c 'import sys' >/dev/null 2>&1; then
+    exec "$c" "$0" "$@"
+  fi
+done
+echo "never-again: no working python found" >&2
+exit 1
+":"""
+USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
 
@@ -18,6 +30,13 @@ import re
 import sys
 from collections import Counter
 
+# Windows consoles default to cp1252, which cannot encode the box-drawing and
+# em-dash characters used below, and files default to the same codec.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 while not os.path.isdir(os.path.join(ROOT, ".claude", "never-again")):
     parent = os.path.dirname(ROOT)
@@ -32,12 +51,12 @@ ARCHIVE = os.path.join(BASE, "archive")
 
 
 def load():
-    with open(STATE) as f:
+    with open(STATE, encoding="utf-8") as f:
         return json.load(f)
 
 
 def save(state):
-    with open(STATE, "w") as f:
+    with open(STATE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
         f.write("\n")
 
@@ -74,7 +93,7 @@ RULE_RE = re.compile(r"^\s*-\s+\[(?P<scope>[^\]]+)\]\s+(?P<text>.+?)\s*\((?P<id>
 def rules(paths=None):
     found = []
     for path in (paths if paths is not None else lesson_files()):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 m = RULE_RE.match(line)
                 if m:
@@ -86,7 +105,7 @@ def rules(paths=None):
 def fires():
     if not os.path.exists(FIRES):
         return []
-    with open(FIRES) as f:
+    with open(FIRES, encoding="utf-8") as f:
         return [ln.strip().split("\t") for ln in f if ln.strip()]
 
 
@@ -184,11 +203,11 @@ def set_mode(lid, mode):
 def retire(lid):
     removed = 0
     for path in lesson_files():
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             lines = f.readlines()
         keep = [ln for ln in lines if f"({lid})" not in ln]
         if len(keep) != len(lines):
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 f.writelines(keep)
             removed += len(lines) - len(keep)
     state = load()
@@ -201,7 +220,7 @@ def retire(lid):
 def sort_rules():
     counts = Counter(f[1] for f in fires())
     for path in lesson_files():
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             lines = f.read().split("\n")
         idx = [i for i, ln in enumerate(lines) if RULE_RE.match(ln)]
         if len(idx) < 2:
@@ -213,7 +232,7 @@ def sort_rules():
             continue
         for i, ln in zip(idx, ordered):
             lines[i] = ln
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
         print(f"{os.path.relpath(path, ROOT)}: reordered {len(idx)} rules, most-hit first")
 
@@ -222,7 +241,7 @@ def why(lid):
     path = os.path.join(ARCHIVE, f"{lid}.md")
     if not os.path.exists(path):
         sys.exit(f"no archive entry for {lid}")
-    print(open(path).read())
+    print(open(path, encoding="utf-8").read())
 
 
 def main():
@@ -247,7 +266,7 @@ def main():
         return retire(lid)
     if cmd == "why":
         return why(lid)
-    sys.exit(__doc__)
+    sys.exit(USAGE)
 
 
 if __name__ == "__main__":
