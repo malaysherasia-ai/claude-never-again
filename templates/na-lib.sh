@@ -32,6 +32,15 @@ na_python() {
   return 1
 }
 
+# na_native_path PATH — Git Bash reports /c/Users/...; Python and Node on
+# Windows cannot open that. Return a path every runtime here understands.
+na_native_path() {
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && cygpath -m "$1" && return 0 ;;
+  esac
+  printf '%s\n' "$1"
+}
+
 # na_begin ID TRIGGER
 # Sets NA_ID, NA_ROOT, NA_PY, NA_SOURCE, NA_CMD, NA_FILE, NA_TOOL_USE_ID.
 # Exits 0 (silently, never blocking) when this hook has nothing to do: the
@@ -39,7 +48,7 @@ na_python() {
 na_begin() {
   NA_ID="$1"
   NA_TRIGGER="${2:-commit}"
-  NA_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+  NA_ROOT="$(na_native_path "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}")"
   NA_STATE="$NA_ROOT/.claude/never-again/state.json"
   NA_CLI="$NA_ROOT/.claude/never-again/na"
   NA_SOURCE="claude"

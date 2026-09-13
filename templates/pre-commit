@@ -8,6 +8,10 @@
 # mode the commit is refused. Retired hooks are silent.
 set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+# Git Bash reports /c/...; the Python and Node the hooks call need C:/... .
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && ROOT="$(cygpath -m "$ROOT")" ;;
+esac
 export CLAUDE_PROJECT_DIR="$ROOT" NA_EVENT=git
 rc=0
 for h in "$ROOT"/.claude/hooks/na/L[0-9]*.sh; do

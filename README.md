@@ -34,18 +34,21 @@ Because `CLAUDE.md` is advice, and advice has two problems.
 
 It is **paid for on every turn.** A 200-line instructions file is 200 lines of
 context in every message you send, forever, whether it is relevant or not.
+Prompt caching makes that cheap in money. It does not make it cheap in
+attention, and attention is what compliance runs on.
 
 And it is **optional.** The longer a session runs, the more likely an
 instruction is drifted past. Plenty of people have written the rule down and
 watched the same bug ship anyway.
 
-A hook is neither. It costs nothing until it fires, and when it fires it
-returns a denial the agent cannot talk its way around.
+A hook is neither. It costs one line until it fires. In block mode it returns
+a denial the agent cannot talk its way around; in warn mode it asks you, and
+records what you answered.
 
 ```
              cost per turn     can be ignored
-CLAUDE.md      every turn           yes
-hook              zero               no
+CLAUDE.md      every line           yes
+hook            one line             no
 ```
 
 `never-again` is the bridge between the two: it decides which of your lessons
@@ -125,7 +128,7 @@ context window is short and the agent is paying attention.
 against the last successful headless boot, runs the boot itself if anything
 changed, and refuses the commit only if the page does not boot.
 
-The rule is now unskippable and costs nothing to carry. Full worked example in
+The rule is now unskippable and costs one line to carry. Full worked example in
 [`examples/browser-boot/`](examples/browser-boot/).
 
 ---
@@ -286,13 +289,15 @@ and reinstall. Run both with `bash tests/hooks.sh && bash tests/uninstall.sh`.
 
 ## The cap, and why it's a cap
 
-Every benchmark on instruction density agrees on the direction: compliance
-falls as the list of simultaneous instructions grows, and the model quietly
-drops rules rather than bending them. IFScale (Distyl AI, 2025) measured 20
-models from 10 to 500 concurrent instructions; even the best reached only 68%
-at the top end, and models followed earlier instructions more reliably than
-later ones. That is the "I wrote the rule down and it ignored it anyway"
-experience, measured.
+The direction is well supported: compliance falls as the list of simultaneous
+instructions grows, and models drop rules quietly rather than refusing.
+IFScale (Distyl AI, 2025) measured 20 models on 10 to 500 concurrent
+instructions in a report-writing task; even the best reached only 68% at the
+top end, and earlier instructions were followed more reliably than later ones.
+That task is not coding, and nobody has measured the same curve for rules in a
+`CLAUDE.md`. What `never-again` borrows is the direction and the primacy
+effect, not a number. The "I wrote the rule down and it ignored it anyway"
+experience is real; the exact threshold for your repo is not in any paper.
 
 So `never-again` does three things the research supports and one it doesn't
 claim:

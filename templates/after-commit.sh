@@ -10,7 +10,7 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
 
-NA_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+NA_ROOT="$(na_native_path "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}")"
 NA_CLI="$NA_ROOT/.claude/never-again/na"
 [ -f "$NA_CLI" ] || exit 0
 PY="$(na_python)" || exit 0

@@ -37,6 +37,18 @@ DETAIL=""
 #   [ -f "$NA_ROOT/$f" ] || continue
 #   if grep -nE 'rm -rf' "$NA_ROOT/$f" >/dev/null; then VIOLATION=1; DETAIL="$DETAIL $f"; fi
 # done < <(na_changed_files .sh .bash)
+#
+# If the check is Python, hand it the files as ARGUMENTS. Its stdin carries the
+# script, so a list piped into it is silently lost:
+# mapfile -t FILES < <(na_changed_files .html .css)
+# [ "${#FILES[@]}" -eq 0 ] && exit 0
+# DETAIL="$("$NA_PY" - "$NA_ROOT" "${FILES[@]}" 2>/dev/null <<'PYEOF' || true
+# import sys, os
+# root, files = sys.argv[1], sys.argv[2:]
+# ...print the hits, one string...
+# PYEOF
+# )"
+# [ -n "$DETAIL" ] && VIOLATION=1
 
 # ----------------------------------------------------------------------------
 

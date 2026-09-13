@@ -2,7 +2,7 @@
 
 All notable changes to never-again are recorded here.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-13
 
 Found by auditing the first day of real use: nine warn-mode fires, none of
 which caught an unverified commit, none graded, and a per-commit hook cost of

@@ -5,7 +5,7 @@
 # `npm run boot:check` if you want it on demand.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
-ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+ROOT="$(na_native_path "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}")"
 STAMP="$ROOT/.claude/never-again/.last-boot"
 
 if ! PY="$(na_python)"; then
