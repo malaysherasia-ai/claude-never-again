@@ -2,6 +2,32 @@
 
 All notable changes to never-again are recorded here.
 
+## [Unreleased]
+
+### Added
+
+- **An uninstall path.** `na uninstall`, or `bash install.sh --uninstall .`.
+  The tool asks a stranger to run a shell script against their repository and
+  then writes a skill, hooks, a CLI, a rule file and a block in `CLAUDE.md`.
+  Not documenting a way back out was a reason on its own not to try it.
+
+  It prints what it will do and waits for a yes; `--yes` skips the prompt, and
+  a closed stdin removes nothing. It strips only the marked block from
+  `CLAUDE.md`, drops only the hook entries pointing at `.claude/hooks/na/` from
+  `settings.json` rather than replacing the file, removes only the section it
+  added to `.gitignore`, and keeps `LESSONS.md` on the grounds that the rules
+  are yours and still read fine without the tool.
+
+  The implementation lives in `na` rather than `install.sh`, because
+  `install.sh` is in the clone and people delete the clone; `na` is in the
+  repo. `install.sh --uninstall` delegates to it, so the two cannot drift over
+  which files belong to never-again.
+
+- **`tests/uninstall.sh`.** Asserts the above against a fixture repo that
+  already has its own `CLAUDE.md` sections, its own hook in `settings.json`,
+  its own `.gitignore` entries and its own `LESSONS.md` rule. 25 assertions.
+  The property under test is that uninstall removes only what it owns.
+
 ## [0.1.2] — 2026-09-13
 
 Found while building the launch site against this tool, and while auditing that

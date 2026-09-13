@@ -199,6 +199,43 @@ and a new hire inherits every scar the team has earned.
 
 ---
 
+## Uninstall
+
+```bash
+.claude/never-again/na uninstall          # or: bash install.sh --uninstall .
+```
+
+It prints exactly what it will do and waits for a yes. Pass `--yes` to skip the
+prompt. Anything other than `y` removes nothing, and so does a closed stdin, so
+it is safe to pipe.
+
+```
+  remove   .claude/skills/never-again/        12 file(s)
+  remove   .claude/hooks/na/                  4 file(s)
+  remove   .claude/never-again/               9 file(s)
+  edit     CLAUDE.md                          strip the never-again block, keep the rest
+  edit     .claude/settings.json              remove 2 hook entries, keep everything else
+  edit     .gitignore                         remove the never-again section
+  keep     LESSONS.md                         your rules outlive the tool
+```
+
+Three things it will not do. It does not rewrite `CLAUDE.md`, only cuts the
+block between the `never-again` markers and leaves the rest of your file alone.
+It does not replace `.claude/settings.json`, only drops the hook entries that
+point at `.claude/hooks/na/`, so your own hooks and settings stay. And it does
+not delete `LESSONS.md`: those rules are yours, they read perfectly well
+without the tool that enforced them, and deleting a stranger's notes is not an
+uninstaller's job. Remove it yourself if you want it gone.
+
+Running it twice is fine. The second run has nothing to do and says so.
+
+`tests/uninstall.sh` asserts all of the above against a repo that already has
+its own `CLAUDE.md` sections, its own hooks in `settings.json` and its own
+`.gitignore` entries, because the property worth testing is not that uninstall
+deletes things but that it deletes only its own.
+
+---
+
 ## The cap, and why it's a cap
 
 Every benchmark on instruction density agrees on the direction: compliance

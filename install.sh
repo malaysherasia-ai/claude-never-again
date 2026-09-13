@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # never-again installer — safe to run repeatedly.
 #
-#   ./install.sh [target-repo]   (defaults to the current directory)
+#   bash install.sh [target-repo]              install or re-install
+#   bash install.sh --uninstall [target-repo]   remove it again
+#
+# Both default to the current directory.
 
 set -euo pipefail
 
@@ -23,7 +26,32 @@ na_python() {
 PY="$(na_python)" || { echo "never-again: no working python found" >&2; exit 1; }
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- uninstall --------------------------------------------------------------
+# Delegates to `na`, which lives in the target repo. This script lives in the
+# clone, and people delete the clone once they have installed; the repo still
+# has `na`. One implementation, so install and uninstall cannot drift over
+# which files belong to never-again.
+UNINSTALL=0
+ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --uninstall) UNINSTALL=1 ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+set -- ${ARGS+"${ARGS[@]}"}
+
 DEST="$(cd "${1:-$PWD}" && pwd)"
+
+if [ "$UNINSTALL" -eq 1 ]; then
+  NA="$DEST/.claude/never-again/na"
+  if [ ! -f "$NA" ]; then
+    echo "never-again is not installed in $DEST (no .claude/never-again/na)." >&2
+    exit 1
+  fi
+  exec "$PY" "$NA" uninstall
+fi
 
 echo "never-again → $DEST"
 
