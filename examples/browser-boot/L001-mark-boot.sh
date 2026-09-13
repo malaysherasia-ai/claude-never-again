@@ -1,23 +1,13 @@
 #!/usr/bin/env bash
-# Companion to L001. Boots the page headlessly; on success writes the stamp
-# the hook checks. Wire this to `npm run boot:check` or call it directly.
+# Companion to L001. Boots the page headlessly; on success writes the manifest
+# the hook checks. The hook calls this itself when the tree has changed since
+# the last boot, so you rarely need to run it by hand. Wire it to
+# `npm run boot:check` if you want it on demand.
 set -euo pipefail
-ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
+ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 STAMP="$ROOT/.claude/never-again/.last-boot"
 
-# Resolve a Python that actually runs. On Windows `command -v python3` finds
-# the Microsoft Store stub, which exits non-zero and would silence this script.
-na_python() {
-  local c
-  for c in "${NA_PYTHON:-}" python3 python py; do
-    [ -n "$c" ] || continue
-    if "$c" -c 'import sys' >/dev/null 2>&1; then
-      command -v "$c"
-      return 0
-    fi
-  done
-  return 1
-}
 if ! PY="$(na_python)"; then
   echo "never-again: no working python found; cannot write the boot manifest." >&2
   exit 1
@@ -29,4 +19,4 @@ node "$ROOT/scripts/boot-check.mjs"
 # Record what was booted, not merely when. See L001-manifest.py.
 mkdir -p "$(dirname "$STAMP")"
 "$PY" "$ROOT/.claude/hooks/na/L001-manifest.py" write "$ROOT" "$STAMP"
-echo "boot ok — stamp written"
+echo "boot ok — manifest written"

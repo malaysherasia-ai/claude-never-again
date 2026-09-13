@@ -34,7 +34,12 @@ ok()   { PASS=$((PASS+1)); echo "  PASS  $1"; }
 bad()  { FAIL=$((FAIL+1)); echo "  FAIL  $1"; }
 check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
-rm -rf "$T"; mkdir -p "$T"; cd "$T"
+# Never run inside the source checkout, or anywhere we did not just create. A
+# failed cd once left this script rewriting CLAUDE.md in the tool repo.
+case "$T" in "$SRC"|"$SRC"/*) echo "refusing to run inside $SRC"; exit 1 ;; esac
+rm -rf "$T" && mkdir -p "$T" && cd "$T" || { echo "cannot create $T"; exit 1; }
+[ "$(pwd -P)" != "$(cd "$SRC" && pwd -P)" ] || { echo "refusing to run inside $SRC"; exit 1; }
+git init -q .
 
 # --- a repo that already has opinions of its own ---------------------------
 cat > CLAUDE.md <<'EOF'
@@ -86,6 +91,8 @@ check "installed: skill dir"        '[ -d .claude/skills/never-again ]'
 check "installed: na"               '[ -f .claude/never-again/na ]'
 check "installed: CLAUDE.md block"  'grep -q "BEGIN never-again" CLAUDE.md'
 check "installed: gitignore block"  'grep -q "never-again/fires.log" .gitignore'
+check "installed: git stub"         'grep -q "never-again" .git/hooks/pre-commit'
+check "installed: resolver entry"   'grep -q "_after.sh" .claude/settings.json'
 
 echo
 echo "=== uninstall refuses without confirmation (non-tty) ==="
@@ -103,6 +110,7 @@ echo "=== removed what it owns ==="
 check "skill dir gone"              '[ ! -d .claude/skills/never-again ]'
 check "hooks/na gone"               '[ ! -d .claude/hooks/na ]'
 check "never-again dir gone"        '[ ! -d .claude/never-again ]'
+check "git stub gone"               '[ ! -f .git/hooks/pre-commit ]'
 
 echo
 echo "=== kept what it does not own ==="
@@ -125,12 +133,15 @@ checks=[
     for g in d.get('hooks',{}).get('PreToolUse',[]) for h in g.get('hooks',[]))),
  ("na hook removed", not any('hooks/na' in h.get('command','')
     for g in d.get('hooks',{}).get('PreToolUse',[]) for h in g.get('hooks',[]))),
+ ("resolver removed", not any('hooks/na' in h.get('command','')
+    for e in ('PostToolUse','PostToolUseFailure')
+    for g in d.get('hooks',{}).get(e,[]) for h in g.get('hooks',[]))),
 ]
 for name,good in checks:
     print(("  PASS  " if good else "  FAIL  ")+name)
 sys.exit(0 if all(g for _,g in checks) else 1)
 PY
-S=$?; [ $S -eq 0 ] && PASS=$((PASS+3)) || FAIL=$((FAIL+1))
+S=$?; [ $S -eq 0 ] && PASS=$((PASS+4)) || FAIL=$((FAIL+1))
 
 echo
 echo "=== safe to run twice ==="
@@ -147,6 +158,17 @@ cp "$SRC/scripts/na" .claude/never-again/na
 "$PYBIN" .claude/never-again/na uninstall --yes >/dev/null 2>&1
 check "stale dir removed cleanly"     '[ ! -d .claude/never-again ]'
 check "still keeps CLAUDE.md"         'grep -q "must survive an uninstall" CLAUDE.md'
+
+echo
+echo "=== a pre-commit hook that is not ours is not touched ==="
+printf '#!/bin/sh
+echo my-own-pre-commit
+' > .git/hooks/pre-commit
+OUT3="$(bash "$SRC/install.sh" . 2>&1)"
+check "install says what line to add"   'echo "$OUT3" | grep -q "add this line"'
+check "install left it alone"           'grep -q my-own-pre-commit .git/hooks/pre-commit && ! grep -q never-again .git/hooks/pre-commit'
+"$PYBIN" .claude/never-again/na uninstall --yes >/dev/null 2>&1
+check "uninstall left it alone"         'grep -q my-own-pre-commit .git/hooks/pre-commit'
 
 echo
 echo "  ---------------------------------"

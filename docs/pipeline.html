@@ -161,14 +161,14 @@
   <div class="section" id="how">
     <p class="eyebrow"><b>//</b> how it works</p>
     <h2>One question per bug.</h2>
-    <p class="sub">Can a script catch this before it happens? If yes, it becomes a hook and costs zero tokens to carry. If no, it becomes a rule line — capped per file, ordered by what fires most, scoped per package, because compliance falls as the list grows.</p>
+    <p class="sub">Can a script catch this before it happens? If yes, it becomes a hook: it runs before every commit, from Claude Code and from git itself, and costs one line to carry. If no, it becomes a rule line — capped per file, ordered by what fires most, scoped per package, because compliance falls as the list grows.</p>
   </div>
 
   <div class="canvas">
     <div class="scroller">
     <svg viewBox="0 0 1220 300" role="img" aria-labelledby="na-t na-d" id="na-svg">
       <title id="na-t">Pipeline: capture, triage, hook, warn, block, with an advisory branch to LESSONS.md</title>
-      <desc id="na-d">A packet moves left to right through five nodes. At triage it may branch upward to LESSONS.md instead.</desc>
+      <desc id="na-d">A packet moves left to right through five nodes. At triage it may branch upward to LESSONS.md instead. Each warn-mode fire records whether the person stopped or went ahead; five stops in a row make the hook eligible for promotion.</desc>
 
       <!-- wires -->
       <path class="wire" d="M 230 190 H 270"/><path id="f1" class="flow" d="M 230 190 H 270"/>
@@ -213,7 +213,7 @@
         <g transform="translate(526,166)"><path class="glyph" d="M9 1L3 9h5l-1 6 6-8H8z"/></g>
         <text class="t" x="554" y="170">Hook</text>
         <text class="m" x="554" y="188">hooks/na/L001.sh</text>
-        <text class="k" x="526" y="220">PreToolUse · git commit *</text>
+        <text class="k" x="526" y="220">PreToolUse + git pre-commit</text>
       </g>
 
       <g class="node" id="n-warn">
@@ -221,8 +221,8 @@
         <g transform="translate(766,166)"><path class="glyph" d="M8 2l7 12H1z M8 7v3 M8 12h.01"/></g>
         <text class="t" x="794" y="170">Warn</text>
         <text class="m" x="794" y="188">decision: ask</text>
-        <rect class="pill" x="766" y="204" width="80" height="18" rx="9"/>
-        <text class="pill-t" id="grade" x="806" y="216" text-anchor="middle">ok 0 / 5</text>
+        <rect class="pill" x="766" y="204" width="96" height="18" rx="9"/>
+        <text class="pill-t" id="grade" x="814" y="216" text-anchor="middle">streak 0 / 5</text>
       </g>
 
       <g class="node" id="n-block">
@@ -263,7 +263,7 @@
   </div>
 
   <div class="stats">
-    <div class="stat"><div class="v">0</div><div class="l">tokens per turn, enforced</div></div>
+    <div class="stat"><div class="v">1 line</div><div class="l">per hook, per turn</div></div>
     <div class="stat"><div class="v">40</div><div class="l">rules per file, default cap</div></div>
     <div class="stat"><div class="v">ask → deny</div><div class="l">warn first, human promotes</div></div>
     <div class="stat"><div class="v">$0</div><div class="l">forever, mit licensed</div></div>
@@ -298,7 +298,7 @@
     NODES.forEach(n => state(n, null)); FLOWS.forEach(f => flow(f, false));
     show(p1, false); show(p2, false); pk(p1, '', false); pk(p2, '', false);
     move(p1, -20, 190); move(p2, 1240, 190);
-    $('grade').textContent = 'ok 0 / 5'; $('mode').textContent = 'warn'; $('cap').textContent = '17/40'; $('dens').textContent = 'loaded 17'; $('tri').textContent = 'before X, fail if Y';
+    $('grade').textContent = 'streak 0 / 5'; $('mode').textContent = 'warn'; $('cap').textContent = '17/40'; $('dens').textContent = 'loaded 17'; $('tri').textContent = 'before X, fail if Y';
     clear();
   }
 
@@ -309,20 +309,22 @@
       run() { flow('f0', false); flow('f1', true); move(p1, 270, 190); state('n-capture', null); state('n-triage', 'active'); print('triage: "before commit, fail if the build was never booted"'); } },
     { hold: 2000, label: 'It can. That sentence is a script, so it becomes a hook rather than a note.',
       run() { $('tri').textContent = 'enforceable'; state('n-triage', 'ok'); print('<span class="g">enforceable</span> → hook'); } },
-    { hold: 2400, label: 'The hook file is written and registered on PreToolUse. It runs before every git commit.',
-      run() { flow('f1', false); flow('f2', true); move(p1, 510, 190); state('n-triage', null); state('n-hook', 'active'); print('wrote  .claude/hooks/na/L001.sh'); print('merged .claude/settings.json  <span class="a">PreToolUse · Bash(git commit *)</span>'); } },
-    { hold: 2600, label: 'New hooks start in warn mode. When they fire, the user is asked, not blocked.',
-      run() { flow('f2', false); flow('f3', true); move(p1, 750, 190); pk(p1, 'warn', true); state('n-hook', null); state('n-warn', 'warn'); print('<span class="w">L001 would block</span>: boot the build in a real browser'); print('permissionDecision: <span class="w">ask</span>'); } },
-    { hold: 3200, label: 'Each fire is graded by a person. Five correct in a row makes it eligible for promotion.',
-      run() { let n = 0; const t = every(() => { n++; $('grade').textContent = 'ok ' + n + ' / 5'; print('<span class="p">$</span> na ok L001   <span class="g">' + n + '/5</span>'); if (n >= 5) { clearInterval(t); print('ready: na promote L001'); } }, 380); } },
+    { hold: 2800, label: 'The hook file is written and registered twice: on PreToolUse for Claude Code, and in git\'s own pre-commit. A commit from any tool or terminal meets the same check.',
+      run() { flow('f1', false); flow('f2', true); move(p1, 510, 190); state('n-triage', null); state('n-hook', 'active'); print('wrote  .claude/hooks/na/L001.sh'); print('merged .claude/settings.json  <span class="a">PreToolUse · Bash(git commit *)</span>'); print('linked .git/hooks/pre-commit  <span class="a">→ hooks/na/pre-commit</span>'); } },
+    { hold: 2800, label: 'The hook does the work itself. If the page has changed since it last booted, it boots it now, and only fires if the boot fails.',
+      run() { print('<span class="p">$</span> git commit -m "fix tabs"'); print('L001: tree changed since last boot → booting…'); later(() => print('L001: <span class="g">boot ok</span>, manifest written · commit goes through'), 900); } },
+    { hold: 2600, label: 'New hooks start in warn mode. When the boot fails, the user is asked, not blocked.',
+      run() { flow('f2', false); flow('f3', true); move(p1, 750, 190); pk(p1, 'warn', true); state('n-hook', null); state('n-warn', 'warn'); print('<span class="p">$</span> git commit -m "wip"'); print('<span class="w">L001 would block</span>: boot failed · ReferenceError at index.html:12'); print('permissionDecision: <span class="w">ask</span>'); } },
+    { hold: 3400, label: 'What the person does next is recorded on its own. Stopping counts as a correct fire; going ahead is written down as "proceeded". Five correct in a row makes it eligible for promotion.',
+      run() { let n = 0; const t = every(() => { n++; $('grade').textContent = 'streak ' + n + ' / 5'; print('fire ' + n + ' · <span class="g">declined</span> at the prompt   streak <span class="g">' + n + '/5</span>'); if (n >= 5) { clearInterval(t); print('<span class="p">$</span> na'); print('ready to promote: L001'); } }, 380); } },
     { hold: 2400, label: 'Promotion is a human command. The hook switches to deny.',
       run() { flow('f3', false); flow('f4', true); move(p1, 990, 190); pk(p1, 'ok', false); state('n-warn', null); state('n-block', 'block'); $('mode').textContent = 'block'; print('<span class="p">$</span> na promote L001'); print('L001 is now <span class="b">block</span>'); } },
-    { hold: 2000, label: 'The lesson leaves the pipeline. It costs zero tokens to carry and cannot be skipped.',
-      run() { flow('f4', false); move(p1, 1240, 190); later(() => show(p1, false), 900); print('L001 · enforced · 0 tokens/turn'); } },
-    { hold: 2600, label: 'Later, the same mistake is attempted again.',
+    { hold: 2000, label: 'The lesson leaves the pipeline. It costs one line to carry and cannot be skipped.',
+      run() { flow('f4', false); move(p1, 1240, 190); later(() => show(p1, false), 900); print('L001 · enforced · one line in LESSONS.md'); } },
+    { hold: 2600, label: 'Later, the same mistake is attempted again, from Claude Code or from a terminal.',
       run() { show(p2, true); move(p2, 1180, 190); print('<span class="p">$</span> git commit -m "wip"'); } },
-    { hold: 3200, label: 'The hook denies it before it runs. Claude is told why and adjusts.',
-      run() { pk(p2, 'block', true); print('<span class="b">L001 blocked</span>: boot the build in a real browser'); print('permissionDecision: <span class="b">deny</span>'); } },
+    { hold: 3200, label: 'The hook denies it before it runs. Claude is told why and adjusts; a terminal sees the same refusal from git.',
+      run() { pk(p2, 'block', true); print('<span class="b">L001 blocked</span>: boot failed · ReferenceError at index.html:12'); print('permissionDecision: <span class="b">deny</span>  ·  git: pre-commit hook exit 1'); } },
   ];
 
   const signPath = [

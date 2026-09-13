@@ -1,87 +1,44 @@
 #!/usr/bin/env bash
 # never-again hook template
 #
-# Copy to .claude/hooks/na/<id>.sh and fill in the CHECK section.
-# Mode is read from .claude/never-again/state.json at runtime, so a hook can be
-# promoted, demoted or retired without editing this file.
+# Copy to .claude/hooks/na/<id>.sh, fill in ID, RULE, TRIGGER and CHECK.
+# Mode (warn / block / retired) is read from state.json at run time, so a hook
+# is promoted, demoted or retired without editing this file.
 #
-# Contract (PreToolUse):
-#   stdin   JSON payload from Claude Code
-#   stdout  JSON decision, always with exit 0
-#     warn  -> permissionDecision "ask"  (user sees a prompt, Claude sees why)
-#     block -> permissionDecision "deny" (call cancelled, Claude sees why)
-#   Any other mode (retired, off) -> no output, exit 0.
-
+# The same file runs under Claude Code (PreToolUse) and under git (pre-commit,
+# through .claude/hooks/na/pre-commit). na-lib.sh handles both.
+#
+# Rules for the CHECK section:
+#   * Look at na_changed_files, not the whole tree. A commit-time hook that
+#     scans every file in the repo is slow on every commit forever.
+#   * Keep it under a second. A hook people wait on is a hook people remove.
+#   * If satisfying the rule means something must have RUN (a test, a boot,
+#     a build), run it here when it is stale. Do not test a stamp that another
+#     command writes: PreToolUse sees the state from before the tool call, so
+#     `run-the-check && git commit` in one command would fire every time.
+#   * Self-test with NA_DRY_RUN=1 so test runs do not land in fires.log.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
 
-ID="L000"                      # <-- lesson id
-RULE="one-line rule text"      # <-- shown when this fires
+ID="L000"                       # <-- lesson id
+RULE="one-line rule text"       # <-- shown when this fires
+TRIGGER="commit"                # commit | any   (the git runner picks up "commit")
 
-# Resolve a Python that actually runs. On Windows `command -v python3` finds
-# the Microsoft Store stub, which exits non-zero and would silence this script.
-na_python() {
-  local c
-  for c in "${NA_PYTHON:-}" python3 python py; do
-    [ -n "$c" ] || continue
-    # Existence is not the test — the Store stub exists and still does nothing.
-    # Only an interpreter that runs a statement and exits 0 is accepted.
-    if "$c" -c 'import sys' >/dev/null 2>&1; then
-      command -v "$c"
-      return 0
-    fi
-  done
-  return 1
-}
-if ! PY="$(na_python)"; then
-  # There is no interpreter left to build JSON with, so hand-write it. The tool
-  # call still proceeds, but a silently dead hook is exactly the failure this
-  # project exists to prevent, so say so where the user will see it.
-  printf '{"systemMessage":"never-again: no working python found; hook %s did not run. Install Python 3.7+ or set NA_PYTHON."}\n' "$ID"
-  exit 0
-fi
-
-ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-STATE="$ROOT/.claude/never-again/state.json"
-LOG="$ROOT/.claude/never-again/fires.log"
-
-PAYLOAD="$(cat)"
-
-# Pull the field you need. For Bash tool calls it is tool_input.command.
-CMD="$("$PY" -c 'import json,sys; print(json.load(sys.stdin).get("tool_input",{}).get("command",""))' <<<"$PAYLOAD" 2>/dev/null || true)"
+na_begin "$ID" "$TRIGGER"       # sets NA_ROOT, NA_PY, NA_CMD, NA_FILE; exits if not our trigger
 
 # --- CHECK ------------------------------------------------------------------
-# Set VIOLATION=1 when the mistake is about to happen. Keep it cheap.
+# Set VIOLATION=1 and DETAIL when the mistake is about to happen.
 
 VIOLATION=0
+DETAIL=""
 
-# example:
-# case "$CMD" in *"rm -rf"*) VIOLATION=1 ;; esac
+# example: flag a pattern in the files this commit would carry
+# while IFS= read -r f; do
+#   [ -f "$NA_ROOT/$f" ] || continue
+#   if grep -nE 'rm -rf' "$NA_ROOT/$f" >/dev/null; then VIOLATION=1; DETAIL="$DETAIL $f"; fi
+# done < <(na_changed_files .sh .bash)
 
 # ----------------------------------------------------------------------------
 
 [ "$VIOLATION" -eq 0 ] && exit 0
-
-MODE="warn"
-if [ -f "$STATE" ]; then
-  MODE="$("$PY" -c 'import json,sys
-try: print(json.load(open(sys.argv[1]))["lessons"][sys.argv[2]]["mode"])
-except Exception: print("warn")' "$STATE" "$ID" 2>/dev/null || echo warn)"
-fi
-
-case "$MODE" in
-  warn)  DECISION="ask";  LABEL="would block" ;;
-  block) DECISION="deny"; LABEL="blocked" ;;
-  *)     exit 0 ;;
-esac
-
-mkdir -p "$(dirname "$LOG")"
-printf '%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$ID" "$MODE" >>"$LOG"
-
-"$PY" - "$DECISION" "never-again $ID $LABEL: $RULE" <<'PY'
-import json, sys
-print(json.dumps({"hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": sys.argv[1],
-    "permissionDecisionReason": sys.argv[2]}}))
-PY
-exit 0
+na_fire "$RULE${DETAIL:+  [$DETAIL]}"

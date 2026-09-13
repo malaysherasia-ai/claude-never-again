@@ -4,7 +4,74 @@ All notable changes to never-again are recorded here.
 
 ## [Unreleased]
 
+Found by auditing the first day of real use: nine warn-mode fires, none of
+which caught an unverified commit, none graded, and a per-commit hook cost of
+fifteen seconds. The fixes below are structural, and every one carries a test.
+
+### Changed
+
+- **Hooks that need something to have run now run it.** The browser-boot
+  example tested a stamp written by a separate command. `PreToolUse` sees the
+  repository as it was before the tool call, so `mark-boot && git commit` in
+  one command fired every time, and six of the first nine real fires were
+  that. Each was approved within seconds, which is how a prompt stops meaning
+  anything. `L001.sh` now runs the boot itself when the tree has changed and
+  fires only when the boot fails. The skill says so for every hook of that
+  shape, and the settings snippet carries a `timeout` for it.
+- **Commit hooks also run from git.** A hook registered only on Claude Code's
+  Bash tool did nothing for a commit made from a terminal, another tool, or
+  `git -C . commit`. `install.sh` now drops a two-line stub into
+  `.git/hooks/pre-commit` (only if you had none; otherwise it tells you the
+  line to add) that hands the commit to `.claude/hooks/na/pre-commit`, which
+  runs every commit-trigger hook with `NA_EVENT=git`. Warn prints and allows;
+  block refuses. When Claude Code already asked about the same commit, the
+  git pass stays silent and records the answer instead of asking twice.
+- **The outcome of a warn prompt is recorded.** Grading was a counter with no
+  fire behind it: five `na ok` calls on an empty log made a hook "ready to
+  promote", and in practice nobody ran it once. Now the hook logs the fire as
+  *pending*; `_after.sh`, registered on `PostToolUse` at install, marks it
+  *proceeded* if the call ran; a fire that never reaches that point is settled
+  as *declined*. Declined counts as correct. `na ok` / `na wrong` grade the
+  latest real fire and refuse when there is none. `na` shows fires, denied,
+  declined, proceeded, ok, wrong and the streak per hook. The `fires` and
+  `correct` fields in `state.json` are no longer written.
+- **Hooks decide from the command, not a substring.** `git -C . commit`,
+  `git  commit` and `git add -A && git commit` now count; `echo "git commit"`
+  does not. The `if` filter in `settings.json` was seen to spawn hooks on
+  unrelated commands, so the script decides too.
+- **Hooks look at changed files, not the whole tree.** `na_changed_files`
+  lists what the commit could carry. A whole-tree scan with a backtracking
+  regex cost 11 seconds per commit on a 60 KB page.
+- **`na retire` now deregisters the hook** from `settings.json` and moves its
+  scripts to the archive. Before, a retired hook still spawned and ran its
+  full check on every commit, then exited silently.
+- **One library for every hook.** `templates/na-lib.sh`, installed at
+  `.claude/hooks/na/na-lib.sh`, holds the interpreter resolver, payload
+  parsing, the commit matcher, mode lookup, fire logging and the decision.
+  Hooks written from the template contain only their check. This closes
+  issue #1 (the resolver had been copied into four files and drifted).
+
+### Fixed
+
+- **Reinstall crashed on non-English text in `CLAUDE.md`.** The block merge
+  opened files with Python's default encoding, cp1252 on Windows, which
+  cannot decode byte 0x81 (the second byte of "Ł", among others). Explicit
+  UTF-8 throughout.
+- **Self-tests polluted the fire log.** Piping a fake payload through a hook
+  appended a real fire, and the log was hand-edited four times in one session
+  to remove them, once deleting real entries. `NA_DRY_RUN=1` decides without
+  writing.
+- **`na` could not be run from PowerShell or cmd.** `na.cmd` next to it can.
+- **Package-level `LESSONS.md` was not counted on Windows** when the drive
+  letter case differed between the working directory and the project root.
+
 ### Added
+
+- **`tests/hooks.sh`.** 44 assertions: a hook built from the template through
+  Claude Code's payload and a real `git commit`, the commit matcher, dry run,
+  outcome recording, grading, block and warn from git, the no-double-fire
+  rule, retire, and reinstall with a non-cp1252 byte. Both test scripts now
+  refuse to run inside the source checkout.
 
 - **An uninstall path.** `na uninstall`, or `bash install.sh --uninstall .`.
   The tool asks a stranger to run a shell script against their repository and

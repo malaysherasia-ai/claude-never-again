@@ -18,17 +18,23 @@ Everything here is counted, not reasoned. It costs no tokens by design.
   na              stats, including loaded rule density for the current directory
   na sort         reorder rule lines by fire count (most-hit first) in each LESSONS.md
   na uninstall    remove never-again from this repo (--yes to skip the prompt)
-  na ok      L017 last fire was correct   (counts toward promotion)
-  na wrong   L017 last fire was a false positive (resets the count)
+  na ok      L017 the latest fire was right      (grades that fire; counts toward promotion)
+  na wrong   L017 the latest fire was a false positive (grades it; streak resets)
   na promote L017 warn -> block
   na demote  L017 block -> warn
-  na retire  L017 remove the rule line, keep the archive; hook goes silent
+  na retire  L017 remove the rule line and deregister the hook; keep the archive
   na why     L017 print the full story
+
+Fires are recorded by the hooks themselves. What happened next is recorded too:
+"declined" when the person stopped at the warning, "proceeded" when they went
+ahead anyway, "blocked" in block mode. A declined fire counts as correct on its
+own; use `na ok` / `na wrong` to say otherwise, or to grade a proceeded one.
 """
 import json
 import os
 import re
 import sys
+import time
 from collections import Counter
 
 # Windows consoles default to cp1252, which cannot encode the box-drawing and
@@ -49,6 +55,13 @@ BASE = os.path.join(ROOT, ".claude", "never-again")
 STATE = os.path.join(BASE, "state.json")
 FIRES = os.path.join(BASE, "fires.log")
 ARCHIVE = os.path.join(BASE, "archive")
+HOOKS = os.path.join(ROOT, ".claude", "hooks", "na")
+SETTINGS = os.path.join(ROOT, ".claude", "settings.json")
+
+# A fire that is still "pending" this long after it was written, with no tool
+# call having run afterwards, is one the person declined at the prompt.
+SETTLE_AFTER_S = 120
+PROMOTE_AT = 5
 
 
 def load():
@@ -75,11 +88,12 @@ def lesson_files():
 def loaded_files(cwd=None):
     """The LESSONS.md files Claude actually sees from a working directory:
     the root file plus the nearest one at or above cwd inside the repo."""
-    cwd = os.path.abspath(cwd or os.getcwd())
+    cwd = os.path.normcase(os.path.abspath(cwd or os.getcwd()))
+    root = os.path.normcase(os.path.abspath(ROOT))
     root_file = os.path.join(ROOT, "LESSONS.md")
     out = [root_file] if os.path.exists(root_file) else []
     d = cwd
-    while d.startswith(ROOT) and d != ROOT:
+    while d.startswith(root) and d != root:
         f = os.path.join(d, "LESSONS.md")
         if os.path.exists(f) and f not in out:
             out.append(f)
@@ -103,18 +117,138 @@ def rules(paths=None):
     return found
 
 
-def fires():
+# ---------------------------------------------------------------------------
+# fires.log
+#
+# One line per fire, tab separated:
+#   ts  id  mode  source  outcome  grade  ref
+#   source   claude | git
+#   outcome  pending | proceeded | declined | blocked
+#   grade    - | ok | wrong
+#   ref      the Claude Code tool_use_id when the payload carried one, else -
+# Lines from before this format (ts, id, mode) still parse; their outcome is
+# unknown and shown as "-".
+# ---------------------------------------------------------------------------
+
+COLS = ("ts", "id", "mode", "source", "outcome", "grade", "ref")
+
+
+def parse_ts(ts):
+    try:
+        return time.mktime(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+    except Exception:
+        return 0
+
+
+def now_ts():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def read_log():
     if not os.path.exists(FIRES):
         return []
+    rows = []
     with open(FIRES, encoding="utf-8") as f:
-        return [ln.strip().split("\t") for ln in f if ln.strip()]
+        for ln in f:
+            ln = ln.rstrip("\n")
+            if not ln.strip():
+                continue
+            parts = ln.split("\t")
+            row = dict(zip(COLS, parts + ["-"] * (len(COLS) - len(parts))))
+            if len(parts) < 4:
+                row["source"] = "claude"
+            rows.append(row)
+    return rows
+
+
+def write_log(rows):
+    os.makedirs(BASE, exist_ok=True)
+    with open(FIRES, "w", encoding="utf-8", newline="\n") as f:
+        for r in rows:
+            f.write("\t".join(r.get(c, "-") or "-" for c in COLS) + "\n")
+
+
+def settle(rows, lid=None, age=SETTLE_AFTER_S):
+    """Pending fires nobody proceeded past are declined fires. A pending fire
+    for the same hook is settled at once: the hook firing again means the
+    previous attempt did not go through. Others only once they are stale, so
+    two hooks firing on the same call do not settle each other."""
+    now = time.time()
+    changed = False
+    for r in rows:
+        if r["outcome"] != "pending":
+            continue
+        if (lid and r["id"] == lid) or now - parse_ts(r["ts"]) > age:
+            r["outcome"] = "declined"
+            changed = True
+    return changed
+
+
+def streak(rows, lid):
+    """Consecutive correct fires: an explicit ok, or an ungraded declined fire.
+    A wrong grade resets it. Proceeded fires count only when graded."""
+    n = 0
+    for r in rows:
+        if r["id"] != lid:
+            continue
+        if r["grade"] == "wrong":
+            n = 0
+        elif r["grade"] == "ok" or (r["grade"] == "-" and r["outcome"] == "declined"):
+            n += 1
+    return n
+
+
+def cmd_fired(lid, mode, source, ref):
+    rows = read_log()
+    settle(rows, lid=lid)
+    if mode == "block":
+        outcome = "blocked"
+    elif source == "git":
+        outcome = "proceeded"      # git warn mode cannot stop the commit
+    else:
+        outcome = "pending"
+    rows.append({"ts": now_ts(), "id": lid, "mode": mode, "source": source,
+                 "outcome": outcome, "grade": "-", "ref": ref or "-"})
+    write_log(rows)
+    return 0
+
+
+def cmd_proceeded(argv):
+    """The tool call ran, so whoever saw the prompt chose to go on."""
+    ref = None
+    lid = None
+    only_if_pending = "--if-pending" in argv
+    if "--tool-use-id" in argv:
+        ref = argv[argv.index("--tool-use-id") + 1]
+    if "--id" in argv:
+        lid = argv[argv.index("--id") + 1]
+    rows = read_log()
+    pending = [r for r in rows if r["outcome"] == "pending" and (not lid or r["id"] == lid)]
+    if ref:
+        matched = [r for r in pending if r["ref"] == ref]
+        # A payload without ids on the PreToolUse side leaves ref "-"; then
+        # the pending set is the best answer available.
+        pending = matched or [r for r in pending if r["ref"] == "-"]
+    if not pending:
+        return 1 if only_if_pending else 0
+    for r in pending:
+        r["outcome"] = "proceeded"
+    write_log(rows)
+    return 0
+
+
+def fires():
+    rows = read_log()
+    if settle(rows):
+        write_log(rows)
+    return rows
 
 
 def bar(n, total, width=18):
     if not total:
         return ""
     filled = max(1, round(width * n / total)) if n else 0
-    return "\u2588" * filled + "\u00b7" * (width - filled)
+    return "█" * filled + "·" * (width - filled)
 
 
 def stats():
@@ -122,9 +256,6 @@ def stats():
     rs = rules()
     fr = fires()
     lessons = state.get("lessons", {})
-    # Only hook-form lessons are hooks. Every lesson used to carry a script, so
-    # counting the whole dict happened to be right; the first rule-line lesson
-    # makes it report one hook too many.
     hooks = {k: v for k, v in lessons.items() if v.get("form") == "hook"}
     blocking = [k for k, v in hooks.items() if v.get("mode") == "block"]
     warning = [k for k, v in hooks.items() if v.get("mode") == "warn"]
@@ -144,26 +275,37 @@ def stats():
         print(f"  rule-only       {rule_only}  (judgement calls, no script)")
     print(f"  hook fires      {len(fr)}")
 
-    blocked = [f for f in fr if len(f) > 2 and f[2] == "block"]
-    saved = len(blocked) * per
+    blocked = [r for r in fr if r["outcome"] == "blocked"]
+    declined = [r for r in fr if r["outcome"] == "declined"]
+    proceeded = [r for r in fr if r["outcome"] == "proceeded"]
+    prevented = len(blocked) + len(declined)
     print()
-    print(f"  prevented       {len(blocked)} block-mode fires")
-    print(f"  est. tokens     ~{saved:,} saved")
+    print(f"  prevented       {prevented}  ({len(blocked)} denied, {len(declined)} declined at the prompt)")
+    print(f"  warned past     {len(proceeded)}  (asked, and the person went ahead)")
+    print(f"  est. tokens     ~{prevented * per:,} saved")
     print(f"                  (at {per:,}/repeat — edit in state.json)")
 
     if fr:
-        counts = Counter(f[1] for f in fr)
+        print()
+        print("  per hook        fires  denied  declined  proceeded  ok  wrong  streak")
+        for lid in sorted({r["id"] for r in fr}):
+            mine = [r for r in fr if r["id"] == lid]
+            c = Counter(r["outcome"] for r in mine)
+            g = Counter(r["grade"] for r in mine)
+            print(f"    {lid:<10}  {len(mine):>5}  {c['blocked']:>6}  {c['declined']:>8}  {c['proceeded']:>9}"
+                  f"  {g['ok']:>2}  {g['wrong']:>5}  {streak(fr, lid):>6}")
+        counts = Counter(r["id"] for r in fr)
         print()
         print("  most-hit")
         top = counts.most_common(5)
         mx = top[0][1]
         for lid, n in top:
             label = next((t for _, i, _, t in rs if i == lid), lid)
-            label = label[:38] + ("\u2026" if len(label) > 38 else "")
+            label = label[:38] + ("…" if len(label) > 38 else "")
             print(f"    {lid}  {bar(n, mx)}  {n:>3}  {label}")
 
     ready = [k for k, v in hooks.items()
-             if v.get("mode") == "warn" and v.get("correct", 0) >= 5]
+             if v.get("mode") == "warn" and streak(fr, k) >= PROMOTE_AT]
     if ready:
         print()
         print("  ready to promote: " + ", ".join(sorted(ready)))
@@ -186,16 +328,21 @@ def mark(lid, correct):
     entry = state.get("lessons", {}).get(lid)
     if not entry:
         sys.exit(f"{lid} not found in state.json")
+    rows = fires()
+    ungraded = [r for r in rows if r["id"] == lid and r["grade"] == "-"]
+    if not ungraded:
+        sys.exit(f"{lid} has no ungraded fire. Grades attach to real fires; "
+                 f"there is nothing to grade until the hook fires.")
+    row = ungraded[-1]
+    row["grade"] = "ok" if correct else "wrong"
+    write_log(rows)
+    n = streak(rows, lid)
+    what = f"{row['ts']} ({row['outcome']})"
     if correct:
-        entry["correct"] = entry.get("correct", 0) + 1
-        n = entry["correct"]
-        print(f"{lid}: {n} correct fire{'s' if n != 1 else ''}"
-              + ("  -> ready: na promote " + lid if n >= 5 and entry.get("mode") == "warn" else ""))
+        print(f"{lid}: graded {what} correct  -> streak {n}"
+              + (f"  -> ready: na promote {lid}" if n >= PROMOTE_AT and entry.get("mode") == "warn" else ""))
     else:
-        entry["correct"] = 0
-        entry["falsePositives"] = entry.get("falsePositives", 0) + 1
-        print(f"{lid}: false positive noted, count reset. Narrow the check before promoting.")
-    save(state)
+        print(f"{lid}: graded {what} a false positive, streak reset. Narrow the check before promoting.")
 
 
 def set_mode(lid, mode):
@@ -206,6 +353,40 @@ def set_mode(lid, mode):
     entry["mode"] = mode
     save(state)
     print(f"{lid} is now {mode}")
+
+
+def _settings_hooks(settings, match=None):
+    """Every never-again hook entry in a settings dict, as (event, group, entry).
+    With `match`, only entries whose command contains it."""
+    found = []
+    for event, groups in (settings.get("hooks") or {}).items():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            for entry in (group or {}).get("hooks", []) or []:
+                cmd = (entry or {}).get("command", "").replace("\\", "/")
+                if "/.claude/hooks/na/" in cmd and (match is None or match in cmd):
+                    found.append((event, group, entry))
+    return found
+
+
+def _drop_settings_entries(settings, entries):
+    for _event, group, entry in entries:
+        group["hooks"].remove(entry)
+    # Drop containers that only existed to hold our entries. Anything the
+    # user put here stays, including an empty object they wrote themselves.
+    for event, groups in list((settings.get("hooks") or {}).items()):
+        settings["hooks"][event] = [g for g in groups if g.get("hooks")]
+        if not settings["hooks"][event]:
+            del settings["hooks"][event]
+    if not settings.get("hooks"):
+        settings.pop("hooks", None)
+
+
+def _write_settings(settings):
+    with open(SETTINGS, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(settings, fh, indent=2)
+        fh.write("\n")
 
 
 def retire(lid):
@@ -222,11 +403,36 @@ def retire(lid):
     if lid in state.get("lessons", {}):
         state["lessons"][lid]["mode"] = "retired"
         save(state)
-    print(f"{lid} retired ({removed} line removed). Archive kept.")
+
+    # A retired hook must stop costing anything: deregister it from Claude
+    # Code so the process never spawns, and move its scripts out of the
+    # directory the git runner reads. The archive keeps them with the story.
+    dropped = 0
+    if os.path.isfile(SETTINGS):
+        try:
+            with open(SETTINGS, encoding="utf-8") as fh:
+                settings = json.load(fh)
+        except (OSError, ValueError):
+            settings = None
+        if settings is not None:
+            entries = _settings_hooks(settings, match=f"/na/{lid}.sh")
+            if entries:
+                _drop_settings_entries(settings, entries)
+                _write_settings(settings)
+                dropped = len(entries)
+    moved = []
+    if os.path.isdir(HOOKS):
+        os.makedirs(ARCHIVE, exist_ok=True)
+        for name in sorted(os.listdir(HOOKS)):
+            if name == f"{lid}.sh" or name.startswith(f"{lid}-"):
+                os.replace(os.path.join(HOOKS, name), os.path.join(ARCHIVE, name))
+                moved.append(name)
+    print(f"{lid} retired ({removed} line removed, {dropped} hook entr{'y' if dropped == 1 else 'ies'} deregistered"
+          + (f", moved to archive: {', '.join(moved)}" if moved else "") + "). Archive kept.")
 
 
 def sort_rules():
-    counts = Counter(f[1] for f in fires())
+    counts = Counter(r["id"] for r in fires())
     for path in lesson_files():
         with open(path, encoding="utf-8") as f:
             lines = f.read().split("\n")
@@ -270,6 +476,21 @@ GITIGNORE_RE = re.compile(
     r"\n*# never-again \(local only\)\n"
     r"(?:\.claude/never-again/fires\.log\n)?"
     r"(?:\.claude/never-again/\.last-boot\n)?", re.S)
+GIT_STUB_MARK = "never-again pre-commit stub"
+
+
+def git_hooks_dir():
+    """Where git looks for hooks in this repo, honouring core.hooksPath."""
+    import subprocess
+    try:
+        p = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-path", "hooks"],
+                           capture_output=True, text=True)
+        if p.returncode == 0 and p.stdout.strip():
+            d = p.stdout.strip()
+            return d if os.path.isabs(d) else os.path.join(ROOT, d)
+    except OSError:
+        pass
+    return None
 
 
 def _count(path):
@@ -299,36 +520,35 @@ def _prune_empty(path):
     return False
 
 
-def _settings_hooks(settings):
-    """Every never-again hook entry in a settings dict, as (event, group, entry)."""
-    found = []
-    for event, groups in (settings.get("hooks") or {}).items():
-        if not isinstance(groups, list):
-            continue
-        for group in groups:
-            for entry in (group or {}).get("hooks", []) or []:
-                cmd = (entry or {}).get("command", "")
-                if "/.claude/hooks/na/" in cmd.replace("\\", "/"):
-                    found.append((event, group, entry))
-    return found
-
-
 def uninstall(argv):
     assume_yes = "--yes" in argv or "-y" in argv
 
     skills = os.path.join(ROOT, ".claude", "skills", "never-again")
-    hooks = os.path.join(ROOT, ".claude", "hooks", "na")
     claude_md = os.path.join(ROOT, "CLAUDE.md")
-    settings_path = os.path.join(ROOT, ".claude", "settings.json")
     gitignore = os.path.join(ROOT, ".gitignore")
     lessons = os.path.join(ROOT, "LESSONS.md")
 
     removals, edits, keeps = [], [], []
 
-    for label, path in (("skill", skills), ("hooks", hooks), ("state", BASE)):
+    for label, path in (("skill", skills), ("hooks", HOOKS), ("state", BASE)):
         if os.path.isdir(path):
             rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
             removals.append((rel + "/", "%d file(s)" % _count(path), path))
+
+    git_stub = None
+    hd = git_hooks_dir()
+    if hd:
+        cand = os.path.join(hd, "pre-commit")
+        try:
+            if os.path.isfile(cand) and GIT_STUB_MARK in open(cand, encoding="utf-8", errors="replace").read():
+                git_stub = cand
+                removals.append((os.path.relpath(cand, ROOT).replace(os.sep, "/"),
+                                 "git pre-commit stub", cand))
+            elif os.path.isfile(cand):
+                keeps.append((os.path.relpath(cand, ROOT).replace(os.sep, "/"),
+                              "not ours; remove the never-again line yourself if you added one"))
+        except OSError:
+            pass
 
     claude_text = None
     if os.path.isfile(claude_md):
@@ -340,9 +560,9 @@ def uninstall(argv):
 
     settings = None
     hook_entries = []
-    if os.path.isfile(settings_path):
+    if os.path.isfile(SETTINGS):
         try:
-            with open(settings_path, encoding="utf-8") as fh:
+            with open(SETTINGS, encoding="utf-8") as fh:
                 settings = json.load(fh)
             hook_entries = _settings_hooks(settings)
         except (OSError, ValueError) as exc:
@@ -409,19 +629,8 @@ def uninstall(argv):
         print("  edited   CLAUDE.md")
 
     if settings is not None and hook_entries:
-        for _event, group, entry in hook_entries:
-            group["hooks"].remove(entry)
-        # Drop containers that only existed to hold our entries. Anything the
-        # user put here stays, including an empty object they wrote themselves.
-        for event, groups in list((settings.get("hooks") or {}).items()):
-            settings["hooks"][event] = [g for g in groups if g.get("hooks")]
-            if not settings["hooks"][event]:
-                del settings["hooks"][event]
-        if not settings.get("hooks"):
-            settings.pop("hooks", None)
-        with open(settings_path, "w", encoding="utf-8", newline="\n") as fh:
-            json.dump(settings, fh, indent=2)
-            fh.write("\n")
+        _drop_settings_entries(settings, hook_entries)
+        _write_settings(settings)
         print("  edited   .claude/settings.json")
 
     if gi_text is not None and GITIGNORE_RE.search(gi_text):
@@ -433,6 +642,13 @@ def uninstall(argv):
     # --- then the directories. BASE holds this script, so it goes last. -----
     failures = []
     for rel, _detail, path in sorted(removals, key=lambda r: r[2] == BASE):
+        if path == git_stub:
+            try:
+                os.remove(path)
+                print("  removed  %s" % rel)
+            except OSError as exc:
+                failures.append((rel, str(exc)))
+            continue
         ok, err = _rmtree(path)
         if ok:
             print("  removed  %s" % rel)
@@ -466,6 +682,13 @@ def main():
         return sort_rules()
     if cmd == "uninstall":
         return uninstall(args[1:])
+    # Internal: called by the hooks, not by people.
+    if cmd == "_fired":
+        if len(args) < 4:
+            sys.exit("usage: na _fired L### MODE SOURCE [REF]")
+        return cmd_fired(args[1].upper(), args[2], args[3], args[4] if len(args) > 4 else "")
+    if cmd == "_proceeded":
+        return cmd_proceeded(args[1:])
     if len(args) < 2:
         sys.exit(f"usage: na {cmd} L###")
     lid = args[1].upper()
@@ -485,4 +708,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

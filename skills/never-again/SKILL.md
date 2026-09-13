@@ -14,7 +14,7 @@ asks a different question first:
 > **Can this be enforced instead of remembered?**
 
 If yes, it becomes a hook — a script that runs automatically and blocks the
-wrong path. Enforced rules cost zero tokens until they fire.
+wrong path. Enforced rules cost nothing per turn beyond their one line.
 If no, it becomes one short line in `LESSONS.md`.
 
 ## The rule that governs this skill
@@ -43,7 +43,7 @@ Work down this ladder and stop at the first rung that fits.
 
 | Rung | Use when | Result |
 |---|---|---|
-| **1. Existing gate** | A linter rule, tsconfig flag, or test already covers this | Turn it on. File nothing. |
+| **1. Existing gate** | A linter rule, tsconfig flag, test, or git hook already covers this | Turn it on. File nothing. |
 | **2. Hook** | The mistake is detectable by a script at a known moment | Write a hook (§3) |
 | **3. Rule line** | It needs judgement a script cannot make | One line in `LESSONS.md` (§4) |
 | **4. Nothing** | One-off, environment-specific, or already impossible | Say so and move on |
@@ -51,12 +51,14 @@ Work down this ladder and stop at the first rung that fits.
 Rung 4 is a real answer. Use it.
 
 **A mistake is hook-shaped if you can describe the check in one sentence
-beginning with "before" or "after".** "Before committing, fail if the build was
-never booted in a browser." That is a hook. "Prefer clear names" is not.
+beginning with "before" or "after".** "Before committing, fail if the page does
+not boot." That is a hook. "Prefer clear names" is not.
 
 ### 3. If it is a hook
 
 Hooks live in `.claude/hooks/na/` and are registered in `.claude/settings.json`.
+Commit-time hooks also run from git's own pre-commit hook, so they apply to
+commits made from any tool or terminal, not only Claude Code's Bash tool.
 
 **Every new hook starts in warn mode. No exceptions.** A hook that blocks on
 day one will block something legitimate and the user will delete the whole
@@ -64,16 +66,30 @@ tool. Warn mode is also how the lesson proves itself.
 
 1. Read `.claude/never-again/state.json` to get the next lesson id (`L###`).
 2. Write `.claude/hooks/na/<id>.sh` from `.claude/never-again/hook-template.sh`
-   and `chmod +x` it. The script reads the hook payload on stdin and prints a
-   JSON decision with exit 0:
-   - warn mode → `permissionDecision: "ask"` — the user sees a prompt with the
-     reason, and can proceed or not
-   - block mode → `permissionDecision: "deny"` — the call is cancelled and
-     Claude is told why
-   - any other mode → no output, exit 0 (this is how retire silences a hook)
+   and `chmod +x` it. Fill in `ID`, `RULE`, `TRIGGER` and the CHECK section.
+   The template sources `na-lib.sh`, which reads the payload, decides whether
+   the command is really a commit, reads the mode from `state.json`, records
+   the fire, and prints the decision. You write only the check.
 
-   Do not use stderr + exit 0 to warn. That output goes only to the debug log;
-   nobody sees it.
+   Four rules for the check. Each one was a real failure:
+
+   - **Look at what changed, not the whole tree.** `na_changed_files .css .html`
+     lists the files this commit could carry. A hook that scans every file in
+     the repo cost 11 seconds per commit on a small site.
+   - **Keep it under a second.** People wait on it every commit, forever.
+   - **If the rule is "X must have run" (a test, a boot, a build), the hook
+     runs X itself when it is stale.** Never test a stamp that a separate
+     command writes. `PreToolUse` sees the repository as it is *before* the
+     tool call, so `run-x && git commit` in one command fires every time, and
+     a prompt that is always approved trains everyone to approve prompts.
+     Give such a hook `"timeout"` in its settings entry. See
+     `examples/browser-boot` in the tool repo.
+   - **Self-test with `NA_DRY_RUN=1`.** Pipe a fake payload through the script
+     four ways: a non-commit command (silent), a clean tree (silent), the bug
+     reintroduced (`ask`, naming the file), and `git -C . commit` (still
+     `ask`). Without `NA_DRY_RUN` every test run lands in `fires.log` and
+     counts toward promotion.
+
 3. Register it. Read `.claude/settings.json`, merge this into the existing
    `hooks` object, write it back. **Never replace the file.** Use the `if`
    field so the process only spawns for the commands that matter:
@@ -99,20 +115,14 @@ tool. Warn mode is also how the lesson proves itself.
 
    Events you will actually use: `PreToolUse` (before a tool runs; can block),
    `PostToolUse` (after; cannot undo), `Stop` (when Claude finishes a turn).
-   For `Edit|Write` matchers, the field to inspect is `tool_input.file_path`.
-4. Add the entry to `state.json` with `"mode": "warn"`, `"fires": 0`,
-   `"correct": 0`.
+   For `Edit|Write` matchers set `TRIGGER="any"` and inspect `$NA_FILE`.
+4. Add the entry to `state.json` with `"form": "hook"`, `"mode": "warn"`.
 5. Write the full story to `.claude/never-again/archive/<id>.md`.
 6. Add **one line** to `LESSONS.md` marked `[hook]` so the user can see it
    exists without reading the script.
 
 Scope the matcher as narrowly as you can. A hook that fires on every write
 will be resented within a day.
-
-If the check needs something to have *happened* (a test run, a boot, a build),
-the hook alone cannot know. Write the companion script that performs the check
-and writes a stamp file, and have the hook test the stamp. A hook that can
-never be satisfied is worse than no hook.
 
 ### 4. If it is a rule line
 
@@ -154,24 +164,32 @@ command exists for that and it is free.
 
 A hook earns its way up. The user decides, never you.
 
-Each time a warn-mode hook fires, the user answers the prompt. Afterwards, ask
-once whether the fire was right, and record it:
+You will not see a warn-mode fire: the prompt goes to the person, not to the
+model. So do not ask "was that right?" after commits. The record keeps itself:
+
+- The hook logs the fire when it asks.
+- If the tool call then runs, `_after.sh` marks the fire **proceeded**: the
+  person went ahead despite the warning.
+- If it never runs, the fire is settled as **declined**: the person stopped.
+  A declined fire counts as correct on its own.
+- `na ok L017` / `na wrong L017` grade the latest fire when the person wants
+  to say otherwise, or to grade a proceeded one. Grades attach to real fires;
+  there is nothing to grade until the hook has fired.
+
+`na` shows per hook: fires, denied, declined, proceeded, ok, wrong, and the
+current streak. After five correct in a row it says so. Offer promotion once,
+when the user runs `na` or asks; do not nag:
 
 ```
-.claude/never-again/na ok L017       # correct — counts toward promotion
-.claude/never-again/na wrong L017    # false positive — resets the count
-```
-
-After five correct fires, offer promotion once:
-
-```
-L017 has fired 5 times, all correct. Promote to blocking? (na promote L017)
+L017 has five correct fires in a row. Promote to blocking? (na promote L017)
 ```
 
 On a false positive, do not offer promotion — narrow the check instead. A hook
 that cries wolf gets uninstalled along with everything else.
 
-Promotion is always reversible: `na demote L017`.
+Promotion is always reversible: `na demote L017`. A hook that never fires is a
+hook to retire: `na retire L017` removes the rule line, deregisters the hook,
+and moves its script to the archive so it stops costing anything.
 
 ## Monorepos and parallel agents
 
@@ -201,6 +219,8 @@ replacing it.
   clearly already knows.
 - Do not write reasoning into `LESSONS.md`. That is what the archive is for.
 - Do not auto-promote a hook to blocking.
+- Do not edit `fires.log` by hand. Self-tests use `NA_DRY_RUN=1` so there is
+  never a reason to.
 - Do not generate statistics yourself. Run `.claude/never-again/na`; a script
   counting lines costs nothing, and you reasoning about counts costs a lot.
 - Do not rewrite `CLAUDE.md` outside the marked block.
@@ -209,8 +229,12 @@ replacing it.
 
 ```
 LESSONS.md                          the rules Claude reads (small, capped)
-.claude/never-again/state.json      lesson index, hook modes, fire counts
+.claude/never-again/state.json      lesson index, hook modes
 .claude/never-again/archive/L###.md the full story, read on demand only
-.claude/never-again/fires.log       one line per hook fire, for stats
+.claude/never-again/fires.log       one line per hook fire with its outcome and grade
+.claude/never-again/hook-template.sh what a new hook starts from
 .claude/hooks/na/L###.sh            the enforcement scripts
+.claude/hooks/na/na-lib.sh          shared by every hook: payload, mode, logging, decision
+.claude/hooks/na/_after.sh          records that a warned commit went ahead
+.claude/hooks/na/pre-commit         runs commit hooks from git itself
 ```

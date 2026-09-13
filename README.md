@@ -71,15 +71,18 @@ That fourth row matters. Most tools file everything. This one is allowed to say
 no, because every line it writes is rent you pay forever.
 
 **3. The hook starts in warn mode.** Instead of blocking, it raises a
-permission prompt with the reason, and you choose. Each time, you record
-whether it was right:
+permission prompt with the reason, and you choose. What you chose is recorded
+without you doing anything: if the commit went ahead the fire is marked
+*proceeded*, if you stopped it is marked *declined*, and a declined fire counts
+as correct. Overrule the record when you want to:
 
 ```bash
-na ok L001        # it caught a real one
-na wrong L001     # false positive — narrow it, count resets
+na ok L001        # that fire was right
+na wrong L001     # false positive — narrow it, streak resets
 ```
 
-After five correct fires you promote it yourself:
+Grades attach to real fires. After five correct in a row, `na` says so, and
+you promote it yourself:
 
 ```bash
 na promote L001
@@ -87,6 +90,11 @@ na promote L001
 
 Never automatic. A hook that blocks wrongly on day one gets the whole tool
 uninstalled.
+
+**4. It guards every commit, not only Claude's.** The same script runs from
+git's own pre-commit hook, so a commit from a terminal, another agent, or a
+different tool meets the same rule. Warn mode prints and lets it through;
+block mode refuses it.
 
 ---
 
@@ -113,8 +121,9 @@ context window is short and the agent is paying attention.
 - [web] [hook] Boot the build in a real browser, not `node --check` — when: before commit (L001)
 ```
 
-...and writes `.claude/hooks/na/L001.sh`, which checks whether any source file
-is newer than the last successful headless boot and refuses the commit if so.
+...and writes `.claude/hooks/na/L001.sh`, which compares every source file
+against the last successful headless boot, runs the boot itself if anything
+changed, and refuses the commit only if the page does not boot.
 
 The rule is now unskippable and costs nothing to carry. Full worked example in
 [`examples/browser-boot/`](examples/browser-boot/).
@@ -137,9 +146,15 @@ $ na
   hooks           7  (4 blocking, 3 warn)
   hook fires      38
 
-  prevented       23 block-mode fires
+  prevented       23  (19 denied, 4 declined at the prompt)
+  warned past     9   (asked, and the person went ahead)
   est. tokens     ~184,000 saved
                   (at 8,000/repeat — edit in state.json)
+
+  per hook        fires  denied  declined  proceeded  ok  wrong  streak
+    L001             14      11         2          1   0      0       5
+    L004              6       6         0          0   0      0       6
+    L009              3       0         2          1   1      0       3
 
   most-hit
     L001  ████████████████··   14  Boot the build in a real browser
@@ -154,8 +169,10 @@ This is a Python script counting lines in files. **No model is involved**, which
 is the point — a tool that spends tokens telling you how many tokens it saved
 has argued itself out of existence.
 
-"Prevented" counts fires in block mode. A single stopped mistake can fire
-twice if the agent retries, so read it as an upper bound.
+"Prevented" counts block-mode denials plus warn-mode fires where the person
+stopped. A single stopped mistake can fire twice if the agent retries, so read
+it as an upper bound. "Warned past" is the honest column: prompts that were
+approved anyway.
 
 The token figure is an estimate from one constant you control: what a repeated
 debug-and-fix cycle costs you. The default of 8,000 is deliberately
@@ -179,6 +196,27 @@ replacing it.
 
 ---
 
+## Two things every hook gets right for you
+
+Hooks source one shared library, `.claude/hooks/na/na-lib.sh`, so the parts
+that went wrong in the first release live in one place.
+
+**It decides from the command, not a substring.** `git -C . commit`,
+`git  commit` and `git add -A && git commit` all count as a commit.
+`echo "git commit"` does not.
+
+**It never asks "did you run X?"** A `PreToolUse` hook sees the repository as
+it was before the tool call, so a hook that checks for a stamp fires every time
+the stamp is written in the same command as the commit. Six of the first nine
+real fires were exactly that. If a rule is "X must have run", the hook runs X
+itself when it is stale, and fires only when X fails.
+
+It also looks at the files that changed rather than the whole tree, records
+what happened after it fired, and stays out of `fires.log` during self-tests
+(`NA_DRY_RUN=1`).
+
+---
+
 ## What gets installed
 
 ```
@@ -186,11 +224,16 @@ LESSONS.md                          the rules Claude reads (small, capped, order
 CLAUDE.md                           one marked block appended — never overwritten
 .claude/skills/never-again/         the skill
 .claude/hooks/na/L###.sh            the enforcement scripts
+.claude/hooks/na/na-lib.sh          shared by every hook
+.claude/hooks/na/_after.sh          records that a warned commit went ahead
+.claude/hooks/na/pre-commit         runs commit hooks from git itself
+.claude/settings.json               _after.sh registered on PostToolUse — merged, never replaced
+.git/hooks/pre-commit               a two-line stub, only if you had none
 .claude/never-again/
-  ├── na                            the stats CLI
-  ├── state.json                    lesson index, hook modes, fire counts
+  ├── na                            the stats CLI  (na.cmd for PowerShell)
+  ├── state.json                    lesson index, hook modes
   ├── archive/L###.md               the full story, read only when asked
-  └── fires.log                     local, gitignored
+  └── fires.log                     every fire, its outcome and grade — local, gitignored
 ```
 
 `install.sh` backs up `CLAUDE.md` before touching it and is safe to re-run.
@@ -211,28 +254,33 @@ it is safe to pipe.
 
 ```
   remove   .claude/skills/never-again/        12 file(s)
-  remove   .claude/hooks/na/                  4 file(s)
+  remove   .claude/hooks/na/                  7 file(s)
   remove   .claude/never-again/               9 file(s)
+  remove   .git/hooks/pre-commit              git pre-commit stub
   edit     CLAUDE.md                          strip the never-again block, keep the rest
-  edit     .claude/settings.json              remove 2 hook entries, keep everything else
+  edit     .claude/settings.json              remove 4 hook entries, keep everything else
   edit     .gitignore                         remove the never-again section
   keep     LESSONS.md                         your rules outlive the tool
 ```
 
-Three things it will not do. It does not rewrite `CLAUDE.md`, only cuts the
+Four things it will not do. It does not rewrite `CLAUDE.md`, only cuts the
 block between the `never-again` markers and leaves the rest of your file alone.
 It does not replace `.claude/settings.json`, only drops the hook entries that
-point at `.claude/hooks/na/`, so your own hooks and settings stay. And it does
-not delete `LESSONS.md`: those rules are yours, they read perfectly well
-without the tool that enforced them, and deleting a stranger's notes is not an
-uninstaller's job. Remove it yourself if you want it gone.
+point at `.claude/hooks/na/`, so your own hooks and settings stay. It does not
+touch a git `pre-commit` hook it did not write. And it does not delete
+`LESSONS.md`: those rules are yours, they read perfectly well without the tool
+that enforced them, and deleting a stranger's notes is not an uninstaller's
+job. Remove it yourself if you want it gone.
 
 Running it twice is fine. The second run has nothing to do and says so.
 
 `tests/uninstall.sh` asserts all of the above against a repo that already has
-its own `CLAUDE.md` sections, its own hooks in `settings.json` and its own
-`.gitignore` entries, because the property worth testing is not that uninstall
-deletes things but that it deletes only its own.
+its own `CLAUDE.md` sections, its own hooks in `settings.json`, its own git
+`pre-commit` and its own `.gitignore` entries, because the property worth
+testing is not that uninstall deletes things but that it deletes only its own.
+`tests/hooks.sh` runs a hook built from the template through both Claude Code's
+payload and a real `git commit`, and checks the fire log, the grading, retire,
+and reinstall. Run both with `bash tests/hooks.sh && bash tests/uninstall.sh`.
 
 ---
 
@@ -266,9 +314,12 @@ claim:
 ```bash
 na sort           # most-fired rules first, in every LESSONS.md
 na why L001       # read the full story behind a rule
-na retire L001    # drop the line, keep the archive
+na retire L001    # drop the line, deregister the hook, keep the archive
 na demote L001    # blocking back to warn
 ```
+
+On Windows, `.claude\never-again\na.cmd` runs the same thing from PowerShell
+or cmd.
 
 ---
 

@@ -1,76 +1,32 @@
 #!/usr/bin/env bash
 # never-again L001 — boot the build in a real browser before committing.
-# Register: PreToolUse, matcher "Bash", if "Bash(git commit *)"
+# Register: PreToolUse, matcher "Bash", if "Bash(git commit *)", timeout 180.
+# Also runs from git's pre-commit through .claude/hooks/na/pre-commit.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
 
 ID="L001"
-RULE="Boot the build in a real browser before committing (run .claude/hooks/na/L001-mark-boot.sh)"
+RULE="Boot the build in a real browser before committing"
+TRIGGER="commit"
 
-# Resolve a Python that actually runs. On Windows `command -v python3` finds
-# the Microsoft Store stub, which exits non-zero and would silence this script.
-na_python() {
-  local c
-  for c in "${NA_PYTHON:-}" python3 python py; do
-    [ -n "$c" ] || continue
-    # Existence is not the test — the Store stub exists and still does nothing.
-    # Only an interpreter that runs a statement and exits 0 is accepted.
-    if "$c" -c 'import sys' >/dev/null 2>&1; then
-      command -v "$c"
-      return 0
-    fi
-  done
-  return 1
-}
-if ! PY="$(na_python)"; then
-  # There is no interpreter left to build JSON with, so hand-write it. The tool
-  # call still proceeds, but a silently dead hook is exactly the failure this
-  # project exists to prevent, so say so where the user will see it.
-  printf '{"systemMessage":"never-again: no working python found; hook %s did not run. Install Python 3.7+ or set NA_PYTHON."}\n' "$ID"
+na_begin "$ID" "$TRIGGER"
+
+STAMP="$NA_ROOT/.claude/never-again/.last-boot"
+MANIFEST="$NA_ROOT/.claude/hooks/na/L001-manifest.py"
+BOOT="$NA_ROOT/.claude/hooks/na/L001-mark-boot.sh"
+
+# Fresh: every source file matches what was last booted successfully.
+if "$NA_PY" "$MANIFEST" check "$NA_ROOT" "$STAMP" >/dev/null 2>&1; then
   exit 0
 fi
 
-ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-STATE="$ROOT/.claude/never-again/state.json"
-LOG="$ROOT/.claude/never-again/fires.log"
-STAMP="$ROOT/.claude/never-again/.last-boot"
+# Stale: something differs from the last verified boot. The first version of
+# this hook stopped here and asked "did you boot?", which fired every time the
+# boot and the commit were chained in one command, because PreToolUse sees the
+# tree from before the command runs. So the hook now runs the boot itself.
+# A passing boot writes the manifest and the commit goes through silently.
+OUT="$(bash "$BOOT" 2>&1)" && exit 0
 
-PAYLOAD="$(cat)"
-CMD="$("$PY" -c 'import json,sys; print(json.load(sys.stdin).get("tool_input",{}).get("command",""))' <<<"$PAYLOAD" 2>/dev/null || true)"
-
-case "$CMD" in *"git commit"*) ;; *) exit 0 ;; esac
-
-# Compare content against the last verified boot, not mtime. An mtime check
-# fires on a restore that changed nothing -- a `cp` of identical bytes, a
-# checkout of the same revision, a formatter that rewrote a file unchanged --
-# and a hook that blocks a commit over a no-op is how the tool gets uninstalled.
-VIOLATION=0
-CHANGED="$("$PY" "$ROOT/.claude/hooks/na/L001-manifest.py" check "$ROOT" "$STAMP" 2>/dev/null)" || VIOLATION=1
-[ "$VIOLATION" -eq 0 ] && exit 0
-
-# Name what differs, so the prompt can be answered without guessing.
-DETAIL="$(printf '%s' "$CHANGED" | head -4 | tr '\t' ' ' | tr '\n' ';')"
-
-MODE="warn"
-if [ -f "$STATE" ]; then
-  MODE="$("$PY" -c 'import json,sys
-try: print(json.load(open(sys.argv[1]))["lessons"][sys.argv[2]]["mode"])
-except Exception: print("warn")' "$STATE" "$ID" 2>/dev/null || echo warn)"
-fi
-
-case "$MODE" in
-  warn)  DECISION="ask";  LABEL="would block" ;;
-  block) DECISION="deny"; LABEL="blocked" ;;
-  *)     exit 0 ;;
-esac
-
-mkdir -p "$(dirname "$LOG")"
-printf '%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$ID" "$MODE" >>"$LOG"
-
-"$PY" - "$DECISION" "never-again $ID $LABEL: $RULE  [$DETAIL]" <<'PY'
-import json, sys
-print(json.dumps({"hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": sys.argv[1],
-    "permissionDecisionReason": sys.argv[2]}}))
-PY
-exit 0
+# The page is broken. Say what failed, not just that something did.
+DETAIL="$(printf '%s' "$OUT" | grep -v '^$' | tail -4 | tr '\n' ';' | cut -c1-300)"
+na_fire "$RULE  [boot failed: $DETAIL]"
