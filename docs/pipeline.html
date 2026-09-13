@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>never-again — pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  #na {
+    --bg: #0A0A0A;
+    --panel: #101113;
+    --panel-2: #17181B;
+    --line: rgba(255,255,255,.08);
+    --line-2: rgba(255,255,255,.16);
+    --text: #E8EAED;
+    --muted: #8A9099;
+    --dim: #5C636C;
+    --accent: #7AA2FF;
+    --warn: #F5B547;
+    --block: #F26D7D;
+    --ok: #3DD68C;
+    --sans: "Inter", system-ui, -apple-system, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--sans);
+    color: var(--text);
+    background: var(--bg);
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 40px 24px 48px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  #na * { box-sizing: border-box; }
+  #na .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 14px; }
+  #na .eyebrow b { color: var(--accent); font-weight: 500; }
+  #na .display { font-size: clamp(34px, 5.2vw, 64px); line-height: .98; font-weight: 600; letter-spacing: -0.03em; text-transform: uppercase; margin: 0 0 18px; max-width: 14ch; }
+  #na .install { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel); padding: 12px 14px; margin: 22px 0 10px; font-family: var(--mono); font-size: 13px; overflow-x: auto; }
+  #na .install .d { color: var(--accent); }
+  #na .install code { color: var(--text); white-space: nowrap; flex: 1; }
+  #na .install button { flex: none; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; padding: 7px 12px; }
+  #na .fine { font-family: var(--mono); font-size: 11px; color: var(--dim); letter-spacing: .04em; text-transform: uppercase; margin: 0 0 32px; }
+  #na .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-top: 28px; }
+  #na .stat { background: var(--panel); padding: 18px 20px; }
+  #na .stat .v { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
+  #na .stat .l { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
+  #na .section { margin-top: 56px; }
+  #na h2 { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; text-transform: uppercase; margin: 0 0 8px; }
+  #na .sub { color: var(--muted); font-size: 15px; margin: 0 0 18px; max-width: 64ch; }
+  #na .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+  #na h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 4px; }
+  #na .lede { color: var(--muted); font-size: 15px; margin: 0; max-width: 60ch; }
+  #na .meta { font-family: var(--mono); font-size: 12px; color: var(--dim); white-space: nowrap; }
+  #na .meta b { color: var(--muted); font-weight: 500; }
+
+  #na .canvas {
+    position: relative; border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+    background-image: radial-gradient(rgba(255,255,255,.06) 1px, transparent 1px);
+    background-size: 22px 22px; overflow: hidden;
+  }
+  #na .scroller { overflow-x: auto; }
+  #na svg { display: block; width: 100%; height: auto; min-width: 900px; }
+
+  #na .node-box { fill: var(--panel-2); stroke: var(--line-2); stroke-width: 1; }
+  #na .node.active .node-box { stroke: var(--accent); }
+  #na .node.warn .node-box { stroke: var(--warn); }
+  #na .node.block .node-box { stroke: var(--block); }
+  #na .node.ok .node-box { stroke: var(--ok); }
+  #na .t { font-family: var(--sans); font-size: 13px; font-weight: 500; fill: var(--text); }
+  #na .m { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
+  #na .k { font-family: var(--mono); font-size: 10px; fill: var(--dim); }
+  #na .glyph { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  #na .node.active .glyph { stroke: var(--accent); }
+  #na .node.warn .glyph { stroke: var(--warn); }
+  #na .node.block .glyph { stroke: var(--block); }
+  #na .node.ok .glyph { stroke: var(--ok); }
+
+  #na .pill { fill: rgba(255,255,255,.05); stroke: var(--line-2); stroke-width: 1; }
+  #na .pill-t { font-family: var(--mono); font-size: 10px; fill: var(--muted); letter-spacing: .02em; }
+  #na .node.warn .pill { fill: rgba(245,181,71,.12); stroke: rgba(245,181,71,.5); } #na .node.warn .pill-t { fill: var(--warn); }
+  #na .node.block .pill { fill: rgba(242,109,125,.12); stroke: rgba(242,109,125,.5); } #na .node.block .pill-t { fill: var(--block); }
+  #na .node.ok .pill { fill: rgba(61,214,140,.12); stroke: rgba(61,214,140,.5); } #na .node.ok .pill-t { fill: var(--ok); }
+  #na .node.active .pill { fill: rgba(108,155,255,.12); stroke: rgba(108,155,255,.5); } #na .node.active .pill-t { fill: var(--accent); }
+
+  #na .wire { fill: none; stroke: var(--line-2); stroke-width: 1.5; }
+  #na .flow { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 3 9; stroke-linecap: round; opacity: 0; transition: opacity .3s; }
+  #na .flow.on { opacity: .9; animation: na-flow 1s linear infinite; }
+  @keyframes na-flow { to { stroke-dashoffset: -12; } }
+
+  #na .packet { transition: transform 1s cubic-bezier(.4,0,.2,1), opacity .3s; }
+  #na .packet circle { fill: var(--accent); }
+  #na .packet.warn circle { fill: var(--warn); }
+  #na .packet.ok circle { fill: var(--ok); }
+  #na .packet.block circle { fill: var(--block); }
+  #na .packet .ring { fill: none; stroke: currentColor; opacity: .35; }
+  #na .packet.pulse .ring { animation: na-pulse 1.2s ease-out infinite; }
+  @keyframes na-pulse { from { r: 7; opacity: .5; } to { r: 16; opacity: 0; } }
+  #na .hidden { opacity: 0; }
+  #na .fast .packet { transition-duration: .5s; }
+  #na .snap .packet { transition-duration: 0s; }
+
+  #na .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  #na .steps, #na .term { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  #na .steps { padding: 6px; }
+  #na .step {
+    display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start;
+    padding: 10px 12px; border-radius: 8px; color: var(--dim); font-size: 14px; cursor: pointer;
+    border: 1px solid transparent;
+  }
+  #na .step:hover { color: var(--muted); }
+  #na .step .n { font-family: var(--mono); font-size: 12px; color: var(--dim); padding-top: 2px; }
+  #na .step.done { color: var(--muted); }
+  #na .step.on { color: var(--text); background: rgba(255,255,255,.04); border-color: var(--line); }
+  #na .step.on .n { color: var(--accent); }
+  #na .term { font-family: var(--mono); font-size: 12.5px; padding: 14px 16px; min-height: 100%; }
+  #na .term .bar { display: flex; gap: 6px; margin-bottom: 12px; }
+  #na .term .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line-2); display: block; }
+  #na .term .out { color: var(--muted); white-space: pre-wrap; margin: 0; line-height: 1.7; }
+  #na .term .out .p { color: var(--text); }
+  #na .term .out .a { color: var(--accent); }
+  #na .term .out .w { color: var(--warn); }
+  #na .term .out .b { color: var(--block); }
+  #na .term .out .g { color: var(--ok); }
+  #na .term .cur { display: inline-block; width: 7px; height: 14px; background: var(--muted); vertical-align: -2px; animation: na-cur 1s steps(2,start) infinite; }
+  @keyframes na-cur { to { opacity: 0; } }
+
+  #na .bar-ctl { display: flex; gap: 8px; align-items: center; margin-top: 16px; }
+  #na button {
+    font: 500 13px var(--sans); color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 14px; cursor: pointer;
+  }
+  #na button:hover { border-color: rgba(255,255,255,.3); }
+  #na button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #na button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+  #na .sp { flex: 1; }
+  #na .key { font-family: var(--mono); font-size: 11px; color: var(--dim); display: flex; gap: 14px; flex-wrap: wrap; }
+  #na .key i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #na .packet, #na .flow.on, #na .packet.pulse .ring, #na .term .cur { transition: none; animation: none; }
+  }
+  @media (max-width: 760px) {
+    #na { padding: 24px 14px 32px; }
+    #na .head { flex-direction: column; align-items: flex-start; }
+    #na .grid { grid-template-columns: 1fr; }
+    #na .key { display: none; }
+    #na .stats { grid-template-columns: 1fr 1fr; }
+    #na .stat .v { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+
+<section id="na" aria-label="How never-again works">
+  <p class="eyebrow">v0.1.0 <b>//</b> free <b>//</b> open source <b>//</b> mit</p>
+  <h1 class="display">Mistakes that can't repeat.</h1>
+  <p class="lede">never-again is a Claude Code skill that turns every bug you fix into a guardrail. Enforceable lessons become hooks that deny the wrong action. The rest become one line the agent reads each turn. Nothing phones home.</p>
+  <div class="install"><span class="d">$</span><code id="cmd">git clone --depth 1 https://github.com/malaysherasia-ai/claude-never-again.git &amp;&amp; bash claude-never-again/install.sh</code><button id="copy" type="button">COPY</button></div>
+  <p class="fine">works on macos, linux, wsl <b>//</b> python 3 <b>//</b> no accounts, no telemetry</p>
+
+  <div class="section" id="how">
+    <p class="eyebrow"><b>//</b> how it works</p>
+    <h2>One question per bug.</h2>
+    <p class="sub">Can a script catch this before it happens? If yes, it becomes a hook and costs zero tokens to carry. If no, it becomes a rule line — capped per file, ordered by what fires most, scoped per package, because compliance falls as the list grows.</p>
+  </div>
+
+  <div class="canvas">
+    <div class="scroller">
+    <svg viewBox="0 0 1220 300" role="img" aria-labelledby="na-t na-d" id="na-svg">
+      <title id="na-t">Pipeline: capture, triage, hook, warn, block, with an advisory branch to LESSONS.md</title>
+      <desc id="na-d">A packet moves left to right through five nodes. At triage it may branch upward to LESSONS.md instead.</desc>
+
+      <!-- wires -->
+      <path class="wire" d="M 230 190 H 270"/><path id="f1" class="flow" d="M 230 190 H 270"/>
+      <path class="wire" d="M 470 190 H 510"/><path id="f2" class="flow" d="M 470 190 H 510"/>
+      <path class="wire" d="M 710 190 H 750"/><path id="f3" class="flow" d="M 710 190 H 750"/>
+      <path class="wire" d="M 950 190 H 990"/><path id="f4" class="flow" d="M 950 190 H 990"/>
+      <path class="wire" d="M 370 148 V 96"/><path id="f5" class="flow" d="M 370 148 V 96"/>
+      <path class="wire" d="M 0 190 H 30"/><path id="f0" class="flow" d="M 0 190 H 30"/>
+
+      <!-- advisory branch -->
+      <g class="node" id="n-lessons">
+        <rect class="node-box" x="270" y="36" width="200" height="60" rx="10"/>
+        <g transform="translate(286,54)"><path class="glyph" d="M2 2h12v14H2z M5 6h6 M5 9h6 M5 12h4"/></g>
+        <text class="t" x="314" y="58">LESSONS.md</text>
+        <text class="m" x="314" y="76">advisory</text>
+        <rect class="pill" x="410" y="46" width="48" height="18" rx="9"/>
+        <text class="pill-t" id="cap" x="434" y="58" text-anchor="middle">17/40</text>
+        <rect class="pill" x="384" y="70" width="74" height="18" rx="9"/>
+        <text class="pill-t" id="dens" x="421" y="82" text-anchor="middle">loaded 17</text>
+      </g>
+
+      <!-- main nodes -->
+      <g class="node" id="n-capture">
+        <rect class="node-box" x="30" y="148" width="200" height="84" rx="10"/>
+        <g transform="translate(46,166)"><path class="glyph" d="M8 1v14 M1 8h14 M3 3l2 2 M13 3l-2 2 M3 13l2-2 M13 13l-2-2"/></g>
+        <text class="t" x="74" y="170">Capture</text>
+        <text class="m" x="74" y="188">symptom · cause · rule</text>
+        <text class="k" x="46" y="220">on: "never again"</text>
+      </g>
+
+      <g class="node" id="n-triage">
+        <rect class="node-box" x="270" y="148" width="200" height="84" rx="10"/>
+        <g transform="translate(286,166)"><path class="glyph" d="M8 1l7 4v6l-7 4-7-4V5z M8 5v4 M8 12h.01"/></g>
+        <text class="t" x="314" y="170">Triage</text>
+        <text class="m" x="314" y="188">can a script catch it?</text>
+        <rect class="pill" x="286" y="204" width="168" height="18" rx="9"/>
+        <text class="pill-t" id="tri" x="370" y="216" text-anchor="middle">before X, fail if Y</text>
+      </g>
+
+      <g class="node" id="n-hook">
+        <rect class="node-box" x="510" y="148" width="200" height="84" rx="10"/>
+        <g transform="translate(526,166)"><path class="glyph" d="M9 1L3 9h5l-1 6 6-8H8z"/></g>
+        <text class="t" x="554" y="170">Hook</text>
+        <text class="m" x="554" y="188">hooks/na/L001.sh</text>
+        <text class="k" x="526" y="220">PreToolUse · git commit *</text>
+      </g>
+
+      <g class="node" id="n-warn">
+        <rect class="node-box" x="750" y="148" width="200" height="84" rx="10"/>
+        <g transform="translate(766,166)"><path class="glyph" d="M8 2l7 12H1z M8 7v3 M8 12h.01"/></g>
+        <text class="t" x="794" y="170">Warn</text>
+        <text class="m" x="794" y="188">decision: ask</text>
+        <rect class="pill" x="766" y="204" width="80" height="18" rx="9"/>
+        <text class="pill-t" id="grade" x="806" y="216" text-anchor="middle">ok 0 / 5</text>
+      </g>
+
+      <g class="node" id="n-block">
+        <rect class="node-box" x="990" y="148" width="190" height="84" rx="10"/>
+        <g transform="translate(1006,166)"><path class="glyph" d="M3 7h10v8H3z M5 7V5a3 3 0 0 1 6 0v2"/></g>
+        <text class="t" x="1034" y="170">Block</text>
+        <text class="m" x="1034" y="188">decision: deny</text>
+        <rect class="pill" x="1006" y="204" width="56" height="18" rx="9"/>
+        <text class="pill-t" id="mode" x="1034" y="216" text-anchor="middle">warn</text>
+      </g>
+
+      <!-- ports -->
+      <g fill="var(--bg)" stroke="var(--line-2)" stroke-width="1">
+        <circle cx="30" cy="190" r="4"/><circle cx="270" cy="190" r="4"/><circle cx="510" cy="190" r="4"/><circle cx="750" cy="190" r="4"/><circle cx="990" cy="190" r="4"/><circle cx="1180" cy="190" r="4"/><circle cx="370" cy="96" r="4"/>
+      </g>
+      <!-- packets -->
+      <g id="p1" class="packet hidden" style="transform: translate(-20px,190px)"><circle class="ring" r="7"/><circle r="5"/></g>
+      <g id="p2" class="packet hidden" style="transform: translate(1240px,190px)"><circle class="ring" r="7"/><circle r="5"/></g>
+    </svg>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="steps" id="steps" role="list"></div>
+    <div class="term" aria-live="polite">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <pre class="out" id="out"></pre>
+    </div>
+  </div>
+
+  <div class="bar-ctl">
+    <button id="b-play" aria-pressed="true">Pause</button>
+    <button id="b-prev">Back</button>
+    <button id="b-next">Next</button>
+    <button id="b-speed" aria-pressed="false">2×</button>
+    <span class="sp"></span>
+    <span class="key"><span><i style="background:var(--accent)"></i>in flight</span><span><i style="background:var(--warn)"></i>asks</span><span><i style="background:var(--block)"></i>denied</span><span><i style="background:var(--ok)"></i>enforced</span></span>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="v">0</div><div class="l">tokens per turn, enforced</div></div>
+    <div class="stat"><div class="v">40</div><div class="l">rules per file, default cap</div></div>
+    <div class="stat"><div class="v">ask → deny</div><div class="l">warn first, human promotes</div></div>
+    <div class="stat"><div class="v">$0</div><div class="l">forever, mit licensed</div></div>
+  </div>
+</section>
+
+<script>
+(function () {
+  const root = document.getElementById('na');
+  const $ = id => document.getElementById(id);
+  const p1 = $('p1'), p2 = $('p2'), out = $('out'), stepsEl = $('steps');
+  const NODES = ['n-capture','n-triage','n-hook','n-warn','n-block','n-lessons'];
+  const FLOWS = ['f0','f1','f2','f3','f4','f5'];
+
+  const move = (p, x, y) => { p.style.transform = `translate(${x}px, ${y}px)`; };
+  const state = (id, cls) => { const n = $(id); n.classList.remove('active','warn','block','ok'); if (cls) n.classList.add(cls); };
+  const flow = (id, on) => $(id).classList.toggle('on', !!on);
+  const pk = (p, cls, pulse) => { p.className.baseVal = 'packet' + (cls ? ' ' + cls : '') + (pulse ? ' pulse' : ''); };
+  const show = (p, v) => p.classList.toggle('hidden', !v);
+
+  // Every timer a step starts is tracked so moving on cancels it.
+  const timers = [];
+  const later = (fn, ms) => { const t = setTimeout(fn, ms); timers.push(t); return t; };
+  const every = (fn, ms) => { const t = setInterval(fn, ms); timers.push(t); return t; };
+  function cancelTimers() { while (timers.length) { const t = timers.pop(); clearTimeout(t); clearInterval(t); } }
+
+  let lines = [];
+  function print(html) { lines.push(html); if (lines.length > 9) lines.shift(); out.innerHTML = lines.join('\n') + '\n<span class="cur"></span>'; }
+  function clear() { lines = []; out.innerHTML = '<span class="cur"></span>'; }
+
+  function reset() {
+    NODES.forEach(n => state(n, null)); FLOWS.forEach(f => flow(f, false));
+    show(p1, false); show(p2, false); pk(p1, '', false); pk(p2, '', false);
+    move(p1, -20, 190); move(p2, 1240, 190);
+    $('grade').textContent = 'ok 0 / 5'; $('mode').textContent = 'warn'; $('cap').textContent = '17/40'; $('dens').textContent = 'loaded 17'; $('tri').textContent = 'before X, fail if Y';
+    clear();
+  }
+
+  const hookPath = [
+    { hold: 2200, label: 'A bug is fixed. The rule that would have prevented it is written down once.',
+      run() { reset(); show(p1, true); flow('f0', true); move(p1, 30, 190); state('n-capture', 'active'); print('<span class="p">$</span> never again'); print('captured L001 · symptom, cause, rule'); } },
+    { hold: 2400, label: 'Triage asks one question: can a script detect this before it happens?',
+      run() { flow('f0', false); flow('f1', true); move(p1, 270, 190); state('n-capture', null); state('n-triage', 'active'); print('triage: "before commit, fail if the build was never booted"'); } },
+    { hold: 2000, label: 'It can. That sentence is a script, so it becomes a hook rather than a note.',
+      run() { $('tri').textContent = 'enforceable'; state('n-triage', 'ok'); print('<span class="g">enforceable</span> → hook'); } },
+    { hold: 2400, label: 'The hook file is written and registered on PreToolUse. It runs before every git commit.',
+      run() { flow('f1', false); flow('f2', true); move(p1, 510, 190); state('n-triage', null); state('n-hook', 'active'); print('wrote  .claude/hooks/na/L001.sh'); print('merged .claude/settings.json  <span class="a">PreToolUse · Bash(git commit *)</span>'); } },
+    { hold: 2600, label: 'New hooks start in warn mode. When they fire, the user is asked, not blocked.',
+      run() { flow('f2', false); flow('f3', true); move(p1, 750, 190); pk(p1, 'warn', true); state('n-hook', null); state('n-warn', 'warn'); print('<span class="w">L001 would block</span>: boot the build in a real browser'); print('permissionDecision: <span class="w">ask</span>'); } },
+    { hold: 3200, label: 'Each fire is graded by a person. Five correct in a row makes it eligible for promotion.',
+      run() { let n = 0; const t = every(() => { n++; $('grade').textContent = 'ok ' + n + ' / 5'; print('<span class="p">$</span> na ok L001   <span class="g">' + n + '/5</span>'); if (n >= 5) { clearInterval(t); print('ready: na promote L001'); } }, 380); } },
+    { hold: 2400, label: 'Promotion is a human command. The hook switches to deny.',
+      run() { flow('f3', false); flow('f4', true); move(p1, 990, 190); pk(p1, 'ok', false); state('n-warn', null); state('n-block', 'block'); $('mode').textContent = 'block'; print('<span class="p">$</span> na promote L001'); print('L001 is now <span class="b">block</span>'); } },
+    { hold: 2000, label: 'The lesson leaves the pipeline. It costs zero tokens to carry and cannot be skipped.',
+      run() { flow('f4', false); move(p1, 1240, 190); later(() => show(p1, false), 900); print('L001 · enforced · 0 tokens/turn'); } },
+    { hold: 2600, label: 'Later, the same mistake is attempted again.',
+      run() { show(p2, true); move(p2, 1180, 190); print('<span class="p">$</span> git commit -m "wip"'); } },
+    { hold: 3200, label: 'The hook denies it before it runs. Claude is told why and adjusts.',
+      run() { pk(p2, 'block', true); print('<span class="b">L001 blocked</span>: boot the build in a real browser'); print('permissionDecision: <span class="b">deny</span>'); } },
+  ];
+
+  const signPath = [
+    { hold: 2200, label: 'A different bug. Same entry point.',
+      run() { reset(); show(p1, true); flow('f0', true); move(p1, 30, 190); state('n-capture', 'active'); print('<span class="p">$</span> never again'); print('captured L002 · symptom, cause, rule'); } },
+    { hold: 2400, label: 'Triage again. This one is about naming, which needs judgement.',
+      run() { flow('f0', false); flow('f1', true); move(p1, 270, 190); state('n-capture', null); state('n-triage', 'active'); print('triage: "prefer names that say what a thing is for"'); } },
+    { hold: 2000, label: 'No script can decide that. So it does not become a hook.',
+      run() { $('tri').textContent = 'needs judgement'; state('n-triage', 'warn'); print('<span class="w">not enforceable</span> → rule line'); } },
+    { hold: 2600, label: 'It becomes one line in LESSONS.md, which the agent reads on every turn.',
+      run() { flow('f1', false); flow('f5', true); move(p1, 370, 96); state('n-triage', null); state('n-lessons', 'active'); $('cap').textContent = '18/40'; $('dens').textContent = 'loaded 18'; print('LESSONS.md  <span class="a">+1</span>  - [core] prefer names that say what a thing is for (L002)'); } },
+    { hold: 3000, label: 'What matters is not file size but how many rules load per turn from where you are working. na reports it and warns when it grows.',
+      run() { flow('f5', false); later(() => show(p1, false), 600); print('<span class="p">$</span> na'); print('rules        18 across 2 files  (cap 40 per file)'); print('loaded here  18  (warn above 60)'); } },
+    { hold: 3200, label: 'Models follow the top of a list better than the bottom. na sort puts the most-fired rules first, from the fire log.',
+      run() { print('<span class="p">$</span> na sort'); later(() => print('LESSONS.md: reordered 18 rules, most-hit first'), 500); later(() => print('<span class="a">L001</span> boot in a real browser  ←  14 fires, now line 1'), 1000); } },
+  ];
+
+  const cycles = [hookPath, signPath];
+  let cycle = 0, idx = -1, timer = null;
+  let playing = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function drawSteps() {
+    stepsEl.innerHTML = '';
+    cycles[cycle].forEach((s, i) => {
+      const d = document.createElement('div');
+      d.className = 'step' + (i < idx ? ' done' : i === idx ? ' on' : ''); d.setAttribute('role', 'listitem');
+      d.innerHTML = `<span class="n">${String(i + 1).padStart(2, '0')}</span><span>${s.label}</span>`;
+      d.addEventListener('click', () => replayTo(i));
+      stepsEl.appendChild(d);
+    });
+  }
+  function replayTo(n) {
+    clearTimeout(timer); cancelTimers();
+    root.classList.add('snap');
+    for (let i = 0; i <= n; i++) { idx = i; cycles[cycle][i].run(); }
+    requestAnimationFrame(() => root.classList.remove('snap'));
+    drawSteps(); schedule();
+  }
+  function go(dir) {
+    clearTimeout(timer); cancelTimers();
+    let next = idx + dir;
+    if (next >= cycles[cycle].length) { cycle = (cycle + 1) % cycles.length; next = 0; }
+    if (next < 0) { cycle = (cycle - 1 + cycles.length) % cycles.length; replayTo(cycles[cycle].length - 1); return; }
+    idx = next; cycles[cycle][idx].run(); drawSteps(); schedule();
+  }
+  function schedule() {
+    if (!playing) return;
+    const speed = root.classList.contains('fast') ? 0.5 : 1;
+    timer = setTimeout(() => go(1), cycles[cycle][idx].hold * speed);
+  }
+
+  $('b-play').addEventListener('click', e => {
+    playing = !playing; e.currentTarget.textContent = playing ? 'Pause' : 'Play'; e.currentTarget.setAttribute('aria-pressed', String(playing));
+    if (playing) schedule(); else clearTimeout(timer);
+  });
+  $('b-next').addEventListener('click', () => go(1));
+  $('b-prev').addEventListener('click', () => idx > 0 ? replayTo(idx - 1) : go(-1));
+  $('b-speed').addEventListener('click', e => { const f = root.classList.toggle('fast'); e.currentTarget.setAttribute('aria-pressed', String(f)); });
+
+  $('copy').addEventListener('click', () => {
+    const t = $('cmd').textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => { $('copy').textContent = 'COPIED'; setTimeout(() => $('copy').textContent = 'COPY', 1400); }).catch(() => {});
+  });
+  if (!playing) { $('b-play').textContent = 'Play'; $('b-play').setAttribute('aria-pressed', 'false'); }
+  go(1);
+})();
+</script>
+</body>
+</html>
