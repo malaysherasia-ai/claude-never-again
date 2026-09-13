@@ -9,10 +9,22 @@ wrong path automatically. If it can't, it files one short line. Nothing else.
 
 MIT licensed. Local. No account, no telemetry, no network calls.
 
+**macOS, Linux, WSL** — needs git, bash, Python 3.7+
+
 ```bash
-git clone https://github.com/malaysherasia-ai/claude-never-again
-./claude-never-again/install.sh .
+git clone --depth 1 https://github.com/malaysherasia-ai/claude-never-again.git
+bash claude-never-again/install.sh .
 ```
+
+**Windows** — needs Git for Windows and Python 3.7+
+
+```powershell
+git clone --depth 1 https://github.com/malaysherasia-ai/claude-never-again.git
+& "C:\Program Files\Git\bin\bash.exe" claude-never-again/install.sh .
+```
+
+Run it with `bash`, not `./install.sh`. The executable bit does not survive a
+ZIP download and is unreliable on Windows checkouts; `bash` always works.
 
 ---
 
@@ -110,6 +122,10 @@ The rule is now unskippable and costs nothing to carry. Full worked example in
 ---
 
 ## Stats, counted not generated
+
+The block below is **illustrative sample output from a mature install**, not
+results measured by this project. It is here to show the shape of the report.
+For what this repository has actually recorded, run `na` in your own checkout.
 
 ```
 $ na
@@ -233,3 +249,9 @@ enforcement, and generating the hook. That is all this does.
 ## License
 
 MIT.
+
+---
+
+`never-again` is an independent open-source project. Not affiliated with,
+endorsed by, or sponsored by Anthropic. Claude and Claude Code are trademarks
+of Anthropic, PBC.

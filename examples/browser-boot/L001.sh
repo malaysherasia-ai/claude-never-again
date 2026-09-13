@@ -39,15 +39,16 @@ CMD="$("$PY" -c 'import json,sys; print(json.load(sys.stdin).get("tool_input",{}
 
 case "$CMD" in *"git commit"*) ;; *) exit 0 ;; esac
 
+# Compare content against the last verified boot, not mtime. An mtime check
+# fires on a restore that changed nothing -- a `cp` of identical bytes, a
+# checkout of the same revision, a formatter that rewrote a file unchanged --
+# and a hook that blocks a commit over a no-op is how the tool gets uninstalled.
 VIOLATION=0
-if [ ! -f "$STAMP" ]; then
-  VIOLATION=1
-else
-  NEWEST="$(find "$ROOT/src" -type f \( -name '*.js' -o -name '*.html' -o -name '*.ts' \) \
-            -newer "$STAMP" -print -quit 2>/dev/null || true)"
-  [ -n "$NEWEST" ] && VIOLATION=1
-fi
+CHANGED="$("$PY" "$ROOT/.claude/hooks/na/L001-manifest.py" check "$ROOT" "$STAMP" 2>/dev/null)" || VIOLATION=1
 [ "$VIOLATION" -eq 0 ] && exit 0
+
+# Name what differs, so the prompt can be answered without guessing.
+DETAIL="$(printf '%s' "$CHANGED" | head -4 | tr '\t' ' ' | tr '\n' ';')"
 
 MODE="warn"
 if [ -f "$STATE" ]; then
@@ -65,7 +66,7 @@ esac
 mkdir -p "$(dirname "$LOG")"
 printf '%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$ID" "$MODE" >>"$LOG"
 
-"$PY" - "$DECISION" "never-again $ID $LABEL: $RULE" <<'PY'
+"$PY" - "$DECISION" "never-again $ID $LABEL: $RULE  [$DETAIL]" <<'PY'
 import json, sys
 print(json.dumps({"hookSpecificOutput": {
     "hookEventName": "PreToolUse",

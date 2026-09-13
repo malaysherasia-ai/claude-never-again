@@ -2,6 +2,43 @@
 
 All notable changes to never-again are recorded here.
 
+## [Unreleased]
+
+Found while building the launch site against this tool, and while auditing that
+site before launch.
+
+### Fixed
+
+- **L001 fired on files that had not changed.** The browser-boot hook compared
+  file mtimes against an empty stamp file, which answers "was anything
+  touched?" rather than "is anything different?". Restoring a file from a
+  backup, checking out the same revision, or a formatter rewriting a file
+  byte-for-byte all bumped the mtime and all fired the hook over a no-op. The
+  stamp is now a manifest of sha256 hashes written only when the boot passes,
+  and the hook fires on a changed hash, a file that was never booted, or one
+  that has gone. It also names what differs instead of only saying something
+  did. This matters more than it sounds: it is the flagship lesson, and a hook
+  that blocks a commit over a no-op on day one is the one that gets the whole
+  tool uninstalled.
+- **`na` counted every lesson as a hook.** `stats()` took the whole lessons
+  dict as the hook set, which was correct only while every lesson carried a
+  script. The first rule-only lesson made it report one hook too many. It now
+  counts `form == "hook"` and reports rule-only lessons separately.
+
+### Changed
+
+- **One install command.** The README told you to run `./install.sh`, the
+  website told you to run `bash install.sh`, and the two disagreed on
+  `--depth 1`. `./install.sh` depends on an executable bit that does not
+  survive a ZIP download and is unreliable on Windows checkouts, so `bash` is
+  now the documented form everywhere, with an explicit Windows block.
+- **The stats block in the README is labelled as sample output.** It shows 38
+  fires and roughly 184,000 tokens, which is illustrative output from a mature
+  install rather than anything this project has measured. Unlabelled, it read
+  as a results claim, and the real block-mode fire count is zero.
+- **Independence from Anthropic stated explicitly** in the README and on the
+  website footer.
+
 ## [0.1.1] — 2026-09-13
 
 Found by using never-again to build its own website. The first lesson filed
