@@ -2,7 +2,7 @@
 
 All notable changes to never-again are recorded here.
 
-## [Unreleased]
+## [0.1.2] — 2026-09-13
 
 Found while building the launch site against this tool, and while auditing that
 site before launch.
