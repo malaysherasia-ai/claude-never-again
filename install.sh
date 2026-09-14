@@ -160,7 +160,12 @@ if [ -f "$DEST/LESSONS.md" ]; then
   "$PY" - "$DEST/LESSONS.md" <<'PYEOF'
 import re, sys
 rule = re.compile(r"^\s*-\s+\[[^\]]+\]\s+.+\(L\d+\)\s*$")
-lines = [ln for ln in open(sys.argv[1], encoding="utf-8", errors="replace").read().split("\n")]
+lines = open(sys.argv[1], encoding="utf-8", errors="replace").read().split("\n")
+# A file made from our template carries a marker; its header prose above the
+# marker is ours, not the person's notes. Only look below it.
+marker = next((i for i, ln in enumerate(lines) if "managed by the never-again skill" in ln), None)
+if marker is not None:
+    lines = lines[marker + 1:]
 filed = sum(1 for ln in lines if rule.match(ln))
 other = sum(1 for ln in lines if ln.strip() and not ln.lstrip().startswith(("#", "<!--"))
             and not rule.match(ln) and ln.strip() != "---")
@@ -270,13 +275,16 @@ for host in "vercel.json:.vercelignore" "netlify.toml:_redirects"; do
   if [ -f "$DEST/$cfg" ]; then
     case "$cfg" in
       vercel.json)
-        if ! { [ -f "$DEST/.vercelignore" ] && grep -q "LESSONS.md" "$DEST/.vercelignore"; }; then
-          echo "  hosting    vercel.json found: Vercel would serve /LESSONS.md publicly."
-          echo "             Add LESSONS.md (and CLAUDE.md, if it is not already) to .vercelignore."
+        if ! { [ -f "$DEST/.vercelignore" ] && grep -q "LESSONS.md" "$DEST/.vercelignore" && grep -q "^\.claude" "$DEST/.vercelignore"; }; then
+          echo "  hosting    vercel.json found: Vercel would serve /LESSONS.md publicly, and"
+          echo "             /.claude/ with it (hooks, settings.json, state.json). Add to .vercelignore:"
+          echo "               .claude"
+          echo "               LESSONS.md"
+          echo "               CLAUDE.md"
         fi ;;
       netlify.toml)
         echo "  hosting    netlify.toml found: if the publish directory is the repo root,"
-        echo "             /LESSONS.md is a public URL. Publish a subdirectory or block it." ;;
+        echo "             /LESSONS.md and /.claude/ are public URLs. Publish a subdirectory or block them." ;;
     esac
   fi
 done

@@ -57,8 +57,9 @@ so, but they are worth knowing in advance:
   machine and are not shared through git. `LESSONS.md` still is. The installer
   prints the un-ignore lines to add if you want the hooks shared.
 - If the repo root is served as a static site (Vercel, Netlify, GitHub Pages),
-  `/LESSONS.md` becomes a public URL. Add it to `.vercelignore`, publish a
-  subdirectory, or accept that your rules are readable.
+  `/LESSONS.md` and `/.claude/` become public URLs, hooks and settings
+  included. Add `.claude`, `LESSONS.md` and `CLAUDE.md` to `.vercelignore`,
+  publish a subdirectory, or accept that they are readable.
 - If the repo already has a `LESSONS.md` somewhere other than the root, in its
   own format, it is left alone: `na` only manages the root file and files
   that carry the tool's marker comment.

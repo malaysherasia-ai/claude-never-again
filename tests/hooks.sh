@@ -194,6 +194,10 @@ check "and says how to bring them in"     'echo "$OUT4" | grep -q "refile each n
 printf -- '- [ci] Run the tests before pushing — when: before push (L001)\n' >> LESSONS.md
 OUT5="$(bash "$SRC/install.sh" . 2>&1)"
 check "mixed file: counts filed and notes" 'echo "$OUT5" | grep -q "1 filed, 2 note(s)"'
+cp .claude/never-again/lessons-template.md LESSONS.md
+printf -- '- [ci] Run the tests before pushing — when: before push (L001)\n' >> LESSONS.md
+OUT5b="$(bash "$SRC/install.sh" . 2>&1)"
+check "template header is not counted as notes" 'echo "$OUT5b" | grep -q "left untouched (1 filed)$"'
 
 echo
 echo "=== a repo's own docs/LESSONS.md is not adopted ==="
