@@ -185,6 +185,17 @@ check "resolver registered once per event" \
   '[ "$("$PYBIN" -c "import json,io;d=json.load(io.open(\".claude/settings.json\",encoding=\"utf-8\"));print(sum(1 for e in (\"PostToolUse\",\"PostToolUseFailure\") for g in d[\"hooks\"].get(e,[]) for h in g[\"hooks\"] if \"_after\" in h[\"command\"]))")" -eq 2 ]'
 
 echo
+echo "=== a LESSONS.md that predates the tool ==="
+printf '# My notes\n\nAlways run the tests before pushing.\nNever hardcode the API key.\n' > LESSONS.md
+OUT4="$(bash "$SRC/install.sh" . 2>&1)"
+check "file left untouched"               '[ "$(grep -c . LESSONS.md)" -eq 3 ] && grep -q "hardcode" LESSONS.md'
+check "install says the notes are invisible to na" 'echo "$OUT4" | grep -q "2 line(s) of notes in your own words"'
+check "and says how to bring them in"     'echo "$OUT4" | grep -q "refile each note"'
+printf -- '- [ci] Run the tests before pushing — when: before push (L001)\n' >> LESSONS.md
+OUT5="$(bash "$SRC/install.sh" . 2>&1)"
+check "mixed file: counts filed and notes" 'echo "$OUT5" | grep -q "1 filed, 2 note(s)"'
+
+echo
 echo "  ---------------------------------"
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

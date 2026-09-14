@@ -2,6 +2,17 @@
 
 All notable changes to never-again are recorded here.
 
+## [Unreleased]
+
+### Changed
+
+- **An existing `LESSONS.md` is reported, not just kept.** The installer
+  always left a pre-existing file alone, but said so in one quiet line. Notes
+  written in a person's own words are invisible to `na`: not counted, not
+  capped, not sorted, not enforced. The installer now counts them, says so,
+  and gives the one sentence to tell Claude to refile them through the skill.
+  Four assertions in `tests/hooks.sh`.
+
 ## [0.2.0] — 2026-09-13
 
 Found by auditing the first day of real use: nine warn-mode fires, none of

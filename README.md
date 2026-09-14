@@ -239,6 +239,14 @@ CLAUDE.md                           one marked block appended — never overwrit
   └── fires.log                     every fire, its outcome and grade — local, gitignored
 ```
 
+**Already have a `LESSONS.md`?** It is left exactly as it is, and Claude keeps
+reading it. But notes in your own words are invisible to `na`: not counted,
+not capped, not sorted, not enforced. The installer says so when it finds
+them. To bring them in, tell Claude once: *"read LESSONS.md and refile each
+note through the never-again skill"*. Each note goes through the same triage;
+the mechanical ones become hooks, the judgement ones become one-liners, and
+the rest are dropped. Your original stays in git history.
+
 `install.sh` backs up `CLAUDE.md` before touching it and is safe to re-run.
 `LESSONS.md` and the hooks are meant to be committed — they are team knowledge,
 and a new hire inherits every scar the team has earned.

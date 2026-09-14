@@ -149,7 +149,27 @@ fi
 
 # --- LESSONS.md -------------------------------------------------------------
 if [ -f "$DEST/LESSONS.md" ]; then
-  echo "  lessons    LESSONS.md already exists — left untouched"
+  # Many people kept a LESSONS.md long before this tool. It is theirs, so it
+  # is never edited. But notes in their own words are invisible to `na`: not
+  # counted, not capped, not sorted, not enforced. Say so, and say what to do.
+  "$PY" - "$DEST/LESSONS.md" <<'PYEOF'
+import re, sys
+rule = re.compile(r"^\s*-\s+\[[^\]]+\]\s+.+\(L\d+\)\s*$")
+lines = [ln for ln in open(sys.argv[1], encoding="utf-8", errors="replace").read().split("\n")]
+filed = sum(1 for ln in lines if rule.match(ln))
+other = sum(1 for ln in lines if ln.strip() and not ln.lstrip().startswith(("#", "<!--"))
+            and not rule.match(ln) and ln.strip() != "---")
+if other and not filed:
+    print("  lessons    LESSONS.md already exists — left untouched")
+    print("             It holds %d line(s) of notes in your own words. Claude will read them," % other)
+    print("             but never-again cannot count, cap, sort or enforce them. To bring them")
+    print("             in, tell Claude once:")
+    print('               "read LESSONS.md and refile each note through the never-again skill"')
+elif other:
+    print("  lessons    LESSONS.md already exists — left untouched (%d filed, %d note(s) in your own words)" % (filed, other))
+else:
+    print("  lessons    LESSONS.md already exists — left untouched (%d filed)" % filed)
+PYEOF
 else
   cp "$SRC/templates/LESSONS.md" "$DEST/LESSONS.md"
   echo "  lessons    LESSONS.md created"
