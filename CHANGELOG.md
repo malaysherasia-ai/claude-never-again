@@ -4,6 +4,35 @@ All notable changes to never-again are recorded here.
 
 ## [Unreleased]
 
+From the first install into a repository that was not ours: Windows 11, an
+existing large `CLAUDE.md`, a gitignored `.claude/` used by other tooling, a
+`docs/LESSONS.md` in a different format, and Vercel serving the repo root.
+
+### Fixed
+
+- **`na` adopted any `LESSONS.md` in the tree.** It walked the whole repo and
+  counted a project's own `docs/LESSONS.md`, and `na sort` or `na retire`
+  would have written to it had a line ever matched. Now only the root file
+  and files carrying the template's marker comment are managed. The skill
+  creates package-level files from `.claude/never-again/lessons-template.md`
+  so they carry it.
+- **A hand-deleted `.claude/` failed every commit.** The git stub exec'd a
+  runner that no longer existed. It now exits 0 when the runner is missing.
+- **`CLAUDE.md.bak` was left for `git add -A` to commit.** It is in the
+  local-only block of `.gitignore` now; an older install gets the line added.
+
+### Added
+
+- **The installer reports three repo conditions** it cannot fix for you: a
+  gitignored `.claude/` (hooks stay local; it prints the un-ignore lines), a
+  `vercel.json` or `netlify.toml` (a root `LESSONS.md` is a public URL), and,
+  from before, a pre-existing `LESSONS.md` in your own words.
+- **README: install from a terminal.** Claude Code's auto mode refuses to
+  run the installer, to edit its own `settings.json`, and to write into
+  `.git/hooks/`, even when approved. The README says so and carries the two
+  snippets to apply by hand if you install from inside Claude Code anyway.
+- Eleven more assertions in `tests/hooks.sh`.
+
 ### Changed
 
 - **An existing `LESSONS.md` is reported, not just kept.** The installer

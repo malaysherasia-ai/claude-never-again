@@ -68,6 +68,7 @@ cp "$SRC/scripts/na" "$DEST/.claude/never-again/na"
 chmod +x "$DEST/.claude/never-again/na"
 cp "$SRC/templates/na.cmd" "$DEST/.claude/never-again/na.cmd"
 cp "$SRC/templates/hook-warn.sh" "$DEST/.claude/never-again/hook-template.sh"
+cp "$SRC/templates/LESSONS.md"   "$DEST/.claude/never-again/lessons-template.md"
 echo "  cli        .claude/never-again/na  (na.cmd for PowerShell and cmd)"
 
 # The shared library every hook sources, the after-commit resolver that records
@@ -130,10 +131,14 @@ if HOOKDIR="$(git -C "$DEST" rev-parse --git-path hooks 2>/dev/null)"; then
   mkdir -p "$HOOKDIR"
   STUB="$HOOKDIR/pre-commit"
   if [ ! -f "$STUB" ]; then
+    # If someone deletes .claude/ by hand instead of running uninstall, the
+    # stub must not fail every commit from then on. No runner, no opinion.
     cat >"$STUB" <<'SHEOF'
 #!/bin/sh
 # never-again pre-commit stub (managed by install.sh; uninstall removes it)
-exec "$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit" "$@"
+r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
+[ -f "$r" ] || exit 0
+exec "$r" "$@"
 SHEOF
     chmod +x "$STUB"
     echo "  git        pre-commit stub installed"
@@ -224,12 +229,57 @@ fi
 
 # --- .gitignore -------------------------------------------------------------
 GI="$DEST/.gitignore"
-if ! { [ -f "$GI" ] && grep -q "never-again/fires.log" "$GI"; }; then
+CLAUDE_IGNORED=0
+if git -C "$DEST" check-ignore -q .claude/hooks/na 2>/dev/null; then
+  CLAUDE_IGNORED=1
+fi
+if [ "$CLAUDE_IGNORED" -eq 1 ]; then
+  # The whole .claude/ tree is per-user here, so the hooks, the modes and the
+  # skill never reach git. The tool still works on this machine; the "a new
+  # clone inherits every hook" promise does not hold. Say so once, loudly.
+  echo "  gitignore  .claude/ is ignored in this repo, so the hooks, state.json and skill"
+  echo "             stay on this machine and are NOT shared through git. LESSONS.md still is."
+  echo "             To share the hooks too, add these lines to .gitignore:"
+  echo "               !.claude/hooks/na/"
+  echo "               !.claude/never-again/"
+  echo "               !.claude/skills/never-again/"
+  echo "               .claude/never-again/fires.log"
+  echo "               .claude/never-again/.last-boot"
+elif ! { [ -f "$GI" ] && grep -q "never-again/fires.log" "$GI"; }; then
   { echo; echo "# never-again (local only)"
     echo ".claude/never-again/fires.log"
-    echo ".claude/never-again/.last-boot"; } >>"$GI"
+    echo ".claude/never-again/.last-boot"
+    echo "CLAUDE.md.bak"; } >>"$GI"
   echo "  gitignore  local state ignored"
+elif ! grep -q "^CLAUDE.md.bak$" "$GI"; then
+  # An install from before 0.2.1 wrote the block without this line.
+  "$PY" - "$GI" <<'PYEOF'
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+s = s.replace(".claude/never-again/.last-boot\n", ".claude/never-again/.last-boot\nCLAUDE.md.bak\n", 1)
+io.open(p, "w", encoding="utf-8", newline="\n").write(s)
+PYEOF
+  echo "  gitignore  CLAUDE.md.bak added to the local-only block"
 fi
+
+# --- static hosts -------------------------------------------------------------
+# A root LESSONS.md is a public URL on a host that serves the repo root.
+for host in "vercel.json:.vercelignore" "netlify.toml:_redirects"; do
+  cfg="${host%%:*}"
+  if [ -f "$DEST/$cfg" ]; then
+    case "$cfg" in
+      vercel.json)
+        if ! { [ -f "$DEST/.vercelignore" ] && grep -q "LESSONS.md" "$DEST/.vercelignore"; }; then
+          echo "  hosting    vercel.json found: Vercel would serve /LESSONS.md publicly."
+          echo "             Add LESSONS.md (and CLAUDE.md, if it is not already) to .vercelignore."
+        fi ;;
+      netlify.toml)
+        echo "  hosting    netlify.toml found: if the publish directory is the repo root,"
+        echo "             /LESSONS.md is a public URL. Publish a subdirectory or block it." ;;
+    esac
+  fi
+done
 
 cat <<'EOF'
 

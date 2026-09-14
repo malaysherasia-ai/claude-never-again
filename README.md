@@ -26,6 +26,43 @@ git clone --depth 1 https://github.com/malaysherasia-ai/claude-never-again.git
 Run it with `bash`, not `./install.sh`. The executable bit does not survive a
 ZIP download and is unreliable on Windows checkouts; `bash` always works.
 
+**Run it yourself, from a terminal.** Claude Code's auto mode refuses to run
+an installer it has not seen before, refuses to edit its own
+`.claude/settings.json`, and refuses to write into `.git/hooks/`, even when
+you approve. That is Claude Code protecting you, not a bug in either tool.
+If you must install from inside Claude Code, turn auto mode off first, or
+expect to apply these two pieces by hand afterwards:
+
+```jsonc
+// .claude/settings.json — merge into "hooks"; keep everything else
+"PostToolUse":        [{ "matcher": "Bash", "hooks": [{ "type": "command", "if": "Bash(git commit *)", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/_after.sh" }] }],
+"PostToolUseFailure": [{ "matcher": "Bash", "hooks": [{ "type": "command", "if": "Bash(git commit *)", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/_after.sh" }] }]
+```
+
+```sh
+# .git/hooks/pre-commit — create if you have none; otherwise add the last two lines to yours
+#!/bin/sh
+r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
+[ -f "$r" ] || exit 0
+exec "$r" "$@"
+```
+
+The same applies to `na`: in auto mode Claude Code may refuse to run it. It
+is a stats script; run it from a terminal.
+
+**Three things to check in your repo.** The installer looks for each and says
+so, but they are worth knowing in advance:
+
+- If `.gitignore` ignores `.claude/`, the hooks and their modes stay on your
+  machine and are not shared through git. `LESSONS.md` still is. The installer
+  prints the un-ignore lines to add if you want the hooks shared.
+- If the repo root is served as a static site (Vercel, Netlify, GitHub Pages),
+  `/LESSONS.md` becomes a public URL. Add it to `.vercelignore`, publish a
+  subdirectory, or accept that your rules are readable.
+- If the repo already has a `LESSONS.md` somewhere other than the root, in its
+  own format, it is left alone: `na` only manages the root file and files
+  that carry the tool's marker comment.
+
 ---
 
 ## Why not just put it in CLAUDE.md?

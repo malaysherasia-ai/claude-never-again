@@ -120,7 +120,7 @@ check "CLAUDE.md still exists"      '[ -f CLAUDE.md ]'
 check "CLAUDE.md house style kept"  'grep -q "must survive an uninstall" CLAUDE.md'
 check "CLAUDE.md block stripped"    '! grep -q "never-again" CLAUDE.md'
 check "gitignore user lines kept"   'grep -q "node_modules/" .gitignore'
-check "gitignore block stripped"    '! grep -q "never-again" .gitignore'
+check "gitignore block stripped"    '! grep -q "never-again" .gitignore && ! grep -q "CLAUDE.md.bak" .gitignore'
 
 echo
 echo "=== settings.json merged, not replaced ==="

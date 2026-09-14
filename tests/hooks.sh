@@ -196,6 +196,49 @@ OUT5="$(bash "$SRC/install.sh" . 2>&1)"
 check "mixed file: counts filed and notes" 'echo "$OUT5" | grep -q "1 filed, 2 note(s)"'
 
 echo
+echo "=== a repo's own docs/LESSONS.md is not adopted ==="
+mkdir -p docs
+printf '# Project record\n\n- [ops] Rotate the key monthly — when: first Monday (L001)\n' > docs/LESSONS.md
+OUT6="$("$PYBIN" $NA)"
+check "na counts the root file only"       'echo "$OUT6" | grep -q "across 1 file "'
+"$PYBIN" $NA sort >/dev/null 2>&1
+check "na sort left it alone"              'grep -q "Rotate the key" docs/LESSONS.md && [ "$(grep -c . docs/LESSONS.md)" -eq 2 ]'
+mkdir -p packages/api && cp .claude/never-again/lessons-template.md packages/api/LESSONS.md
+printf -- '- [api] Validate the schema — when: before commit (L002)\n' >> packages/api/LESSONS.md
+check "a marked package file is counted"   '"$PYBIN" $NA | grep -q "across 2 files"'
+check "and loads from inside the package"  '(cd packages/api && CLAUDE_PROJECT_DIR="$T" "$PYBIN" "$T/$NA" | grep -q "loaded here     2")'
+
+echo
+echo "=== CLAUDE.md.bak stays out of git ==="
+check "backup is gitignored"               'git check-ignore -q CLAUDE.md.bak'
+
+echo
+echo "=== a hand-deleted .claude/ does not break commits ==="
+mv .claude .claude.off
+echo x > e.txt; git add e.txt
+git commit -qm x 2>/dev/null; RC=$?
+check "stub exits 0 without its runner"    '[ $RC -eq 0 ]'
+mv .claude.off .claude
+
+echo
+echo "=== a repo that ignores .claude/ is told ==="
+printf '.claude/\n' >> .gitignore
+OUT7="$(bash "$SRC/install.sh" . 2>&1)"
+check "install warns the hooks stay local" 'echo "$OUT7" | grep -q "NOT shared through git"'
+check "and prints the un-ignore lines"     'echo "$OUT7" | grep -q "!.claude/hooks/na/"'
+sed -i '/^\.claude\/$/d' .gitignore
+
+echo
+echo "=== a static host is told ==="
+echo '{}' > vercel.json
+OUT8="$(bash "$SRC/install.sh" . 2>&1)"
+check "vercel: warns about /LESSONS.md"    'echo "$OUT8" | grep -q "serve /LESSONS.md publicly"'
+echo 'LESSONS.md' > .vercelignore
+OUT9="$(bash "$SRC/install.sh" . 2>&1)"
+check "vercel: quiet once ignored"         '! echo "$OUT9" | grep -q "serve /LESSONS.md"'
+rm -f vercel.json .vercelignore
+
+echo
 echo "  ---------------------------------"
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

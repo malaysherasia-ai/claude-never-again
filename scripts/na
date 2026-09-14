@@ -75,13 +75,32 @@ def save(state):
         f.write("\n")
 
 
+MARKER = "managed by the never-again skill"
+
+
+def managed(path):
+    """The root LESSONS.md is always the tool's: the installer said so, and the
+    skill appends there. Any other LESSONS.md in the tree is only ours if it
+    carries the template's marker comment. A project's own docs/LESSONS.md in
+    some other format must never be counted, sorted or edited."""
+    if os.path.dirname(os.path.abspath(path)) == os.path.abspath(ROOT):
+        return True
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return MARKER in f.read()
+    except OSError:
+        return False
+
+
 def lesson_files():
     out = []
     for dirpath, dirnames, filenames in os.walk(ROOT):
         dirnames[:] = [d for d in dirnames
                        if d not in (".git", "node_modules", ".claude", "dist", "build")]
         if "LESSONS.md" in filenames:
-            out.append(os.path.join(dirpath, "LESSONS.md"))
+            p = os.path.join(dirpath, "LESSONS.md")
+            if managed(p):
+                out.append(p)
     return out
 
 
@@ -95,7 +114,7 @@ def loaded_files(cwd=None):
     d = cwd
     while d.startswith(root) and d != root:
         f = os.path.join(d, "LESSONS.md")
-        if os.path.exists(f) and f not in out:
+        if os.path.exists(f) and f not in out and managed(f):
             out.append(f)
             break
         d = os.path.dirname(d)
@@ -475,7 +494,8 @@ BLOCK_RE = re.compile(r"\n*<!-- BEGIN never-again -->.*?<!-- END never-again -->
 GITIGNORE_RE = re.compile(
     r"\n*# never-again \(local only\)\n"
     r"(?:\.claude/never-again/fires\.log\n)?"
-    r"(?:\.claude/never-again/\.last-boot\n)?", re.S)
+    r"(?:\.claude/never-again/\.last-boot\n)?"
+    r"(?:CLAUDE\.md\.bak\n)?", re.S)
 GIT_STUB_MARK = "never-again pre-commit stub"
 
 

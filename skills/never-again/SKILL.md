@@ -198,6 +198,12 @@ and moves its script to the archive so it stops costing anything.
 one nearest the files it is touching, so a rule about the API never costs
 tokens while working on the web app.
 
+When you create a package-level `LESSONS.md`, copy it from
+`.claude/never-again/lessons-template.md` so it carries the marker comment
+(`managed by the never-again skill`). `na` only counts, sorts and edits
+non-root files that carry that marker. A project's own `docs/LESSONS.md` in
+another format is left alone, and you must not append to it either.
+
 The number that matters is not rules per file but rules *loaded per turn*:
 root plus nearest package. `na` reports this as "loaded here" and warns above
 `loadedWarn` (default 60). Compliance degrades as that number grows, and the
