@@ -142,6 +142,21 @@ exec "$r" "$@"
 SHEOF
     chmod +x "$STUB"
     echo "  git        pre-commit stub installed"
+  elif grep -q "never-again pre-commit stub" "$STUB"; then
+    # Ours. Rewrite it so an older stub picks up the missing-runner guard.
+    if ! grep -q '\[ -f "\$r" \]' "$STUB"; then
+      cat >"$STUB" <<'SHEOF'
+#!/bin/sh
+# never-again pre-commit stub (managed by install.sh; uninstall removes it)
+r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
+[ -f "$r" ] || exit 0
+exec "$r" "$@"
+SHEOF
+      chmod +x "$STUB"
+      echo "  git        pre-commit stub upgraded"
+    else
+      echo "  git        pre-commit stub already in place"
+    fi
   elif grep -q "never-again" "$STUB"; then
     echo "  git        pre-commit already calls never-again"
   else

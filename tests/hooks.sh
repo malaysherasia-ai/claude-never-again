@@ -217,6 +217,13 @@ echo "=== CLAUDE.md.bak stays out of git ==="
 check "backup is gitignored"               'git check-ignore -q CLAUDE.md.bak'
 
 echo
+echo "=== an old stub is upgraded on re-run ==="
+printf '#!/bin/sh\n# never-again pre-commit stub (managed by install.sh; uninstall removes it)\nexec "$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit" "$@"\n' > .git/hooks/pre-commit
+OUT10="$(bash "$SRC/install.sh" . 2>&1)"
+check "install says it upgraded the stub"  'echo "$OUT10" | grep -q "stub upgraded"'
+check "stub now guards a missing runner"   'grep -q "exit 0" .git/hooks/pre-commit'
+
+echo
 echo "=== a hand-deleted .claude/ does not break commits ==="
 mv .claude .claude.off
 echo x > e.txt; git add e.txt
