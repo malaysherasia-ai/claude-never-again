@@ -237,7 +237,7 @@ echo "=== a static host is told ==="
 echo '{}' > vercel.json
 OUT8="$(bash "$SRC/install.sh" . 2>&1)"
 check "vercel: warns about /LESSONS.md"    'echo "$OUT8" | grep -q "serve /LESSONS.md publicly"'
-echo 'LESSONS.md' > .vercelignore
+printf '.claude\nLESSONS.md\nCLAUDE.md\n' > .vercelignore
 OUT9="$(bash "$SRC/install.sh" . 2>&1)"
 check "vercel: quiet once ignored"         '! echo "$OUT9" | grep -q "serve /LESSONS.md"'
 rm -f vercel.json .vercelignore
