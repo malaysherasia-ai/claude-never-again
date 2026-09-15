@@ -106,6 +106,10 @@ check "git -C . commit: asks"             'NA_DRY_RUN=1 fire "git -C . commit -m
 check "git -c k=v commit: asks"           'NA_DRY_RUN=1 fire "git -c core.autocrlf=false commit -m x" | grep -q "\"ask\""'
 check "add && commit chain: asks"         'NA_DRY_RUN=1 fire "git add -A && git commit -m x" | grep -q "\"ask\""'
 check "dry run wrote nothing"             '[ "$(logn)" -eq 2 ]'
+check "emoji in the message: still asks"  'NA_DRY_RUN=1 fire "git commit -m \"fix 🤖 footer\"" | grep -q "\"ask\""'
+check "quoted mention of git commit: silent" '[ -z "$(NA_DRY_RUN=1 fire "echo \"{\\\"command\\\":\\\"x && git commit -m x\\\"}\" | cat")" ]'
+check "chain helper: single command is not a chain" '! (source .claude/hooks/na/na-lib.sh; na_is_chain "git commit -m x")'
+check "chain helper: checkout && commit is"  '(source .claude/hooks/na/na-lib.sh; na_is_chain "git checkout -b fix && git commit -m x")'
 
 echo
 echo "=== outcome is recorded, not guessed ==="
@@ -335,6 +339,10 @@ check "does not list the managed root LESSONS.md" '! echo "$OUTI" | grep -q "^  
 check "docs/LESSONS.md is a candidate"     'echo "$OUTI" | grep -q "docs/LESSONS.md"'
 "$PYBIN" $NA import --mark NOTES.md --filed 2 >/dev/null
 check "marked as imported"                 '"$PYBIN" $NA import | grep -q "NOTES.md .*imported"'
+"$PYBIN" $NA import --mark CLAUDE.md --filed 1 >/dev/null
+check "CLAUDE.md mark matches the listing" '"$PYBIN" $NA import | grep -q "CLAUDE.md .* imported"'
+bash "$SRC/install.sh" . >/dev/null 2>&1
+check "reinstall does not unmark CLAUDE.md" '"$PYBIN" $NA import | grep -q "CLAUDE.md .* imported"'
 check "source file untouched"              '[ "$(grep -c . NOTES.md)" -eq 3 ]'
 echo "Third note." >> NOTES.md
 check "changed since import is noticed"    '"$PYBIN" $NA import | grep -q "NOTES.md .*changed since import"'

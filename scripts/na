@@ -702,12 +702,9 @@ def import_candidates():
             full = os.path.join(dirpath, name)
             if os.path.abspath(full) in managed_set:
                 continue
-            try:
-                text = open(full, encoding="utf-8", errors="replace").read()
-            except OSError:
+            text = _note_text(full)
+            if text is None:
                 continue
-            if name.lower() == "claude.md":
-                text = BLOCK_RE.sub("\n", text)          # our own block is not a note
             lines = [ln for ln in text.split("\n")
                      if ln.strip() and not ln.lstrip().startswith(("#", "<!--", "```", "---"))]
             if not lines:
@@ -722,6 +719,20 @@ def _sha_text(text):
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+def _note_text(full):
+    """The notes in a file as the listing and the mark both see them: for a
+    CLAUDE.md, without our own block, which is not a note and changes on
+    every install. Both hash this, so "changed since import" means the
+    person's text changed."""
+    try:
+        text = open(full, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return None
+    if os.path.basename(full).lower() == "claude.md":
+        text = BLOCK_RE.sub("\n", text)
+    return text
+
+
 def cmd_import(argv):
     state = load()
     imports = state.setdefault("imports", {})
@@ -731,7 +742,7 @@ def cmd_import(argv):
         if not os.path.isfile(full):
             sys.exit("no such file: %s" % rel)
         filed = int(argv[argv.index("--filed") + 1]) if "--filed" in argv else None
-        imports[rel] = {"sha": _sha_text(open(full, encoding="utf-8", errors="replace").read()),
+        imports[rel] = {"sha": _sha_text(_note_text(full) or ""),
                         "date": time.strftime("%Y-%m-%d"), "filed": filed}
         save(state)
         print("%s marked imported%s" % (rel, "" if filed is None else " (%d lesson%s filed)" % (filed, "" if filed == 1 else "s")))

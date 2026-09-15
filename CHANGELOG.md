@@ -4,6 +4,24 @@ All notable changes to never-again are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+From the first import run on a client repository (Windows 11):
+
+- **An emoji in the commit message blinded every hook on Windows.** The
+  command extractor printed through a cp1252 pipe and crashed, so the hook
+  saw an empty command. Every Python the library spawns now writes UTF-8.
+- **`na import --mark` never matched the listing for `CLAUDE.md`.** The
+  listing hashed the file without the tool's own block, the mark hashed it
+  raw. One function now feeds both.
+- **A self-test set off the live hook.** The fake payload mentioned
+  "git commit" inside quotes, and the command matcher counted it. Quoted
+  text is now ignored (a commit hidden in quotes still meets the git
+  runner), and the skill feeds self-test payloads from a file.
+- **A branch check fired one command early** on `git checkout -b x && git
+  commit`. `na_is_chain` and a skill rule: a check about repository state
+  defers to the git runner when the command is a chain.
+
 ### Added
 
 - **`na import`: lessons the repo already learned.** Finds the notes files a

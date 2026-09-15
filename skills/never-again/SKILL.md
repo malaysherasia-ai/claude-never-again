@@ -77,6 +77,12 @@ tool. Warn mode is also how the lesson proves itself.
      lists the files this commit could carry. A hook that scans every file in
      the repo cost 11 seconds per commit on a small site.
    - **Keep it under a second.** People wait on it every commit, forever.
+   - **A check about repository state belongs to the git runner.** The
+     current branch, what is staged, whether a tag exists: `PreToolUse` sees
+     all of that as it was *before* the command, so `git checkout -b fix &&
+     git commit` looks like a commit on the old branch. For such a check,
+     `[ "$NA_SOURCE" = claude ] && na_is_chain "$NA_CMD" && exit 0`, and let
+     the git-side run, which sees the state at commit time, decide.
    - **If the rule is "X must pass before commit" (a test suite, a smoke
      command, a build, a browser boot), do not write a check at all.** Copy
      `.claude/never-again/hook-verify-template.sh` instead, set `ID` and
@@ -103,10 +109,13 @@ tool. Warn mode is also how the lesson proves itself.
      { "type": "command", "if": "Bash(git commit *)", "timeout": 180,
        "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/L017.sh" }
      ```
-   - **Self-test with `NA_DRY_RUN=1`.** Pipe a fake payload through the script
-     four ways: a non-commit command (silent), a clean tree (silent), the bug
-     reintroduced (`ask`, naming the file), and `git -C . commit` (still
-     `ask`). Without `NA_DRY_RUN` every test run lands in `fires.log` and
+   - **Self-test with `NA_DRY_RUN=1`, feeding the payload from a file.**
+     Write the fake payload to a file and run `bash L017.sh < payload.json`,
+     so the words "git commit" never appear in your own Bash command: the
+     hooks already registered fire on the command text, and one self-test
+     set off the live hook that way. Test four ways: a non-commit command
+     (silent), a clean tree (silent), the bug reintroduced (`ask`, naming
+     the file), and `git -C . commit` (still `ask`). Without `NA_DRY_RUN` every test run lands in `fires.log` and
      counts toward promotion. A verify-shaped hook still runs its command
      under `NA_DRY_RUN`, because nothing else can decide, but records nothing;
      self-test it with a fast command first, then set the real one.
