@@ -67,8 +67,10 @@ echo "  skill      .claude/skills/never-again/"
 cp "$SRC/scripts/na" "$DEST/.claude/never-again/na"
 chmod +x "$DEST/.claude/never-again/na"
 cp "$SRC/templates/na.cmd" "$DEST/.claude/never-again/na.cmd"
-cp "$SRC/templates/hook-warn.sh" "$DEST/.claude/never-again/hook-template.sh"
-cp "$SRC/templates/LESSONS.md"   "$DEST/.claude/never-again/lessons-template.md"
+cp "$SRC/templates/hook-warn.sh"   "$DEST/.claude/never-again/hook-template.sh"
+cp "$SRC/templates/hook-verify.sh" "$DEST/.claude/never-again/hook-verify-template.sh"
+cp "$SRC/templates/LESSONS.md"     "$DEST/.claude/never-again/lessons-template.md"
+cp "$SRC/templates/na-manifest.py" "$DEST/.claude/hooks/na/na-manifest.py"
 echo "  cli        .claude/never-again/na  (na.cmd for PowerShell and cmd)"
 
 # The shared library every hook sources, the after-commit resolver that records
@@ -250,7 +252,7 @@ fi
 # --- .gitignore -------------------------------------------------------------
 GI="$DEST/.gitignore"
 CLAUDE_IGNORED=0
-if git -C "$DEST" check-ignore -q .claude/hooks/na 2>/dev/null; then
+if git -C "$DEST" check-ignore -q --no-index .claude/hooks/na 2>/dev/null; then
   CLAUDE_IGNORED=1
 fi
 if [ "$CLAUDE_IGNORED" -eq 1 ]; then
@@ -269,18 +271,25 @@ elif ! { [ -f "$GI" ] && grep -q "never-again/fires.log" "$GI"; }; then
   { echo; echo "# never-again (local only)"
     echo ".claude/never-again/fires.log"
     echo ".claude/never-again/.last-boot"
+    echo ".claude/never-again/verified/"
     echo "CLAUDE.md.bak"; } >>"$GI"
   echo "  gitignore  local state ignored"
-elif ! grep -q "^CLAUDE.md.bak$" "$GI"; then
-  # An install from before 0.2.1 wrote the block without this line.
+elif ! grep -q "^CLAUDE.md.bak$" "$GI" || ! grep -q "^\.claude/never-again/verified/$" "$GI"; then
+  # An install from an earlier release wrote the block without these lines.
   "$PY" - "$GI" <<'PYEOF'
 import io, sys
 p = sys.argv[1]
 s = io.open(p, encoding="utf-8").read()
-s = s.replace(".claude/never-again/.last-boot\n", ".claude/never-again/.last-boot\nCLAUDE.md.bak\n", 1)
+tail = ".claude/never-again/.last-boot\n"
+add = ""
+if ".claude/never-again/verified/\n" not in s:
+    add += ".claude/never-again/verified/\n"
+if "CLAUDE.md.bak\n" not in s:
+    add += "CLAUDE.md.bak\n"
+s = s.replace(tail, tail + add, 1)
 io.open(p, "w", encoding="utf-8", newline="\n").write(s)
 PYEOF
-  echo "  gitignore  CLAUDE.md.bak added to the local-only block"
+  echo "  gitignore  local-only block brought up to date"
 fi
 
 # --- static hosts -------------------------------------------------------------

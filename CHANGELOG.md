@@ -4,6 +4,20 @@ All notable changes to never-again are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- **A verify-shaped hook template, configurable per lesson.** For rules of
+  the shape "X must pass before commit": a test suite, a smoke command, a
+  build, a browser boot. `hook-verify-template.sh` takes its command, the
+  files it watches and the directories it skips from the lesson's `verify`
+  block in `state.json`, so the same script serves a web page, a Python
+  package or a Go service. It stays silent while nothing watched has changed,
+  runs the command itself when something has, records a pass in
+  `.claude/never-again/verified/<id>` (local, gitignored), and fires only on
+  a failure. `--run` verifies by hand. The browser-boot example is now that
+  template with two variables set and a five-line `verify` block; its
+  private manifest and mark-boot helpers are gone. Nine assertions.
+
 From the first install into a repository that was not ours: Windows 11, an
 existing large `CLAUDE.md`, a gitignored `.claude/` used by other tooling, a
 `docs/LESSONS.md` in a different format, and Vercel serving the repo root.

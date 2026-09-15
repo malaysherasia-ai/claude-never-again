@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# never-again L001 — boot the build in a real browser before committing.
-# This is templates/hook-verify.sh with ID and RULE set; the boot command and
-# the watched files live in state.json (see state.snippet.json).
+# never-again verify-shaped hook template
 #
 # For rules of the shape "X must have passed before commit": a test suite, a
 # smoke command, a build, a browser boot. Copy to .claude/hooks/na/<id>.sh,
@@ -29,8 +27,8 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
 
-ID="L001"
-RULE="Boot the build in a real browser before committing"
+ID="L000"                       # <-- lesson id
+RULE="the check must pass before committing"   # <-- shown when this fires
 TRIGGER="commit"
 
 # --- manual run: verify now, record on success, no payload ----------------

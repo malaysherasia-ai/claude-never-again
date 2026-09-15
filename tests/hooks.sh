@@ -213,6 +213,41 @@ check "a marked package file is counted"   '"$PYBIN" $NA | grep -q "across 2 fil
 check "and loads from inside the package"  '(cd packages/api && CLAUDE_PROJECT_DIR="$T" "$PYBIN" "$T/$NA" | grep -q "loaded here     2")'
 
 echo
+echo "=== a verify-shaped hook runs the check itself ==="
+# The check: fail when any .txt file contains BROKEN. Any command works here;
+# a test suite or a browser boot is the same shape.
+printf '#!/bin/sh\n! grep -rl BROKEN --include=*.txt . >/dev/null\n' > check.sh
+cp .claude/never-again/hook-verify-template.sh .claude/hooks/na/L002.sh
+sed -i 's/^ID="L000".*/ID="L002"/; s/^RULE=.*/RULE="the smoke check must pass before committing"/' .claude/hooks/na/L002.sh
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+s = json.load(io.open(p, encoding='utf-8'))
+s['lessons']['L002'] = {"form": "hook", "mode": "warn", "hook": ".claude/hooks/na/L002.sh",
+                        "verify": {"run": "sh check.sh", "watch": [".txt"], "skip": ["docs"]}}
+json.dump(s, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+V=".claude/hooks/na/L002.sh"; VM=".claude/never-again/verified/L002"
+firev() { printf '{"tool_input":{"command":"git commit -m x"}}' | NA_DRY_RUN=1 bash "$V"; }
+git add -A >/dev/null 2>&1; git commit -qm "fixture" >/dev/null 2>&1
+check "never verified: runs the check, passes, silent" '[ -z "$(firev)" ] && [ -f "$VM" ]'
+check "manifest lists the watched files"  'grep -q "a.txt" "$VM" && ! grep -q "check.sh" "$VM"'
+check "unchanged: fast path, silent"      '[ -z "$(firev)" ]'
+echo BROKEN > g.txt
+OUT="$(firev)"
+check "changed and failing: asks"         'echo "$OUT" | grep -q "\"ask\""'
+check "names the command that failed"     'echo "$OUT" | grep -q "sh check.sh failed"'
+echo fine > g.txt
+check "fixed: runs again, passes, silent" '[ -z "$(firev)" ] && grep -q "g.txt" "$VM"'
+check "manifest dir is gitignored"        'git check-ignore -q "$VM"'
+echo BROKEN > g.txt
+bash "$V" --run >/dev/null 2>&1; RC=$?
+check "--run reports a failure"           '[ $RC -ne 0 ]'
+echo fine > g.txt
+check "--run records a pass"              'bash "$V" --run 2>&1 | grep -q "recorded"'
+rm -f g.txt check.sh .claude/hooks/na/L002.sh
+
+echo
 echo "=== CLAUDE.md.bak stays out of git ==="
 check "backup is gitignored"               'git check-ignore -q CLAUDE.md.bak'
 
