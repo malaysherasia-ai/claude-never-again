@@ -41,20 +41,29 @@ na_native_path() {
   printf '%s\n' "$1"
 }
 
-# na_begin ID TRIGGER
-# Sets NA_ID, NA_ROOT, NA_PY, NA_SOURCE, NA_CMD, NA_FILE, NA_TOOL_USE_ID.
-# Exits 0 (silently, never blocking) when this hook has nothing to do: the
-# command is not the trigger, or no interpreter is available.
-na_begin() {
-  NA_ID="$1"
-  NA_TRIGGER="${2:-commit}"
+# na_env — the environment every hook needs: NA_ROOT, NA_STATE, NA_CLI,
+# NA_SOURCE and NA_PY. Returns 1 when no interpreter runs. na_begin calls
+# this; a hook that runs without a payload (a manual --run) calls it directly.
+na_env() {
   NA_ROOT="$(na_native_path "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}")"
   NA_STATE="$NA_ROOT/.claude/never-again/state.json"
   NA_CLI="$NA_ROOT/.claude/never-again/na"
   NA_SOURCE="claude"
   [ "${NA_EVENT:-}" = "git" ] && NA_SOURCE="git"
+  if [ -n "${NA_PY:-}" ] && "$NA_PY" -c 'import sys' >/dev/null 2>&1; then
+    return 0
+  fi
+  NA_PY="$(na_python)"
+}
 
-  if ! NA_PY="$(na_python)"; then
+# na_begin ID TRIGGER
+# Sets NA_ID plus everything na_env sets, then NA_CMD, NA_FILE, NA_TOOL_USE_ID.
+# Exits 0 (silently, never blocking) when this hook has nothing to do: the
+# command is not the trigger, or no interpreter is available.
+na_begin() {
+  NA_ID="$1"
+  NA_TRIGGER="${2:-commit}"
+  if ! na_env; then
     if [ "$NA_SOURCE" = "git" ]; then
       echo "never-again: no working python found; hook $NA_ID did not run. Install Python 3.7+ or set NA_PYTHON." >&2
     else
@@ -115,15 +124,32 @@ na_changed_files() {
   printf '%s\n' "$list" | grep -E "($pat)\$" || true
 }
 
+# na_lesson_field FIELD [DEFAULT] — one top-level field of this lesson's
+# record in state.json, or DEFAULT when the file, the lesson or the field is
+# missing. The one place hooks read their own record from.
+na_lesson_field() {
+  local v
+  v="$("$NA_PY" -c 'import json,sys
+try:
+    x = json.load(open(sys.argv[1], encoding="utf-8"))["lessons"][sys.argv[2]][sys.argv[3]]
+    print(x if isinstance(x, str) else json.dumps(x))
+except Exception:
+    print(sys.argv[4])' "$NA_STATE" "$NA_ID" "$1" "${2:-}" 2>/dev/null)" || v="${2:-}"
+  printf '%s' "$v"
+}
+
 # na_mode — the hook's mode from state.json: warn, block, or retired.
 na_mode() {
-  local m="warn"
-  if [ -f "$NA_STATE" ]; then
-    m="$("$NA_PY" -c 'import json,sys
-try: print(json.load(open(sys.argv[1], encoding="utf-8"))["lessons"][sys.argv[2]]["mode"])
-except Exception: print("warn")' "$NA_STATE" "$NA_ID" 2>/dev/null || echo warn)"
-  fi
-  printf '%s' "$m"
+  na_lesson_field mode warn
+}
+
+# na_pending — under git, after Claude Code's PreToolUse hook already asked
+# about this same commit: the person has answered. Records that they went
+# ahead and returns 0, so the caller can stay quiet instead of asking twice.
+na_pending() {
+  [ "$NA_SOURCE" = "git" ] || return 1
+  [ -z "${NA_DRY_RUN:-}" ] && [ -f "$NA_CLI" ] || return 1
+  "$NA_PY" "$NA_CLI" _proceeded --id "$NA_ID" --if-pending >/dev/null 2>&1
 }
 
 # na_fire REASON — the mistake is about to happen. Records the fire and emits
@@ -138,13 +164,9 @@ na_fire() {
   esac
 
   if [ "$NA_SOURCE" = "git" ]; then
-    # If Claude Code's PreToolUse hook already asked about this same commit and
-    # the person chose to proceed, the git runner is the second look at the
-    # same event: record the outcome and stay quiet rather than warn twice.
-    if [ -z "${NA_DRY_RUN:-}" ] && [ -f "$NA_CLI" ] \
-       && "$NA_PY" "$NA_CLI" _proceeded --id "$NA_ID" --if-pending >/dev/null 2>&1; then
-      exit 0
-    fi
+    # The git runner is the second look at a commit Claude Code already asked
+    # about; record the answer and stay quiet rather than warn twice.
+    na_pending && exit 0
     if [ -z "${NA_DRY_RUN:-}" ] && [ -f "$NA_CLI" ]; then
       "$NA_PY" "$NA_CLI" _fired "$NA_ID" "$mode" git "" >/dev/null 2>&1
     fi

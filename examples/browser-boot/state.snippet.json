@@ -10,7 +10,7 @@
       "verify": {
         "run": "node scripts/boot-check.mjs",
         "watch": [".html", ".css", ".js", ".mjs"],
-        "skip": ["shots", ".lighthouse", "scripts"]
+        "skip": ["scripts"]
       }
     }
   }

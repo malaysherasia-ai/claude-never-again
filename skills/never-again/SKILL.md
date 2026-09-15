@@ -90,9 +90,19 @@ tool. Warn mode is also how the lesson proves itself.
      command itself when something has, and fires only when it fails. It
      never asks "did you run it?": `PreToolUse` sees the repository as it is
      *before* the tool call, so a stamp written by a separate command is
-     always stale and `run-x && git commit` fires every time. Give the
-     settings entry a `"timeout"` longer than the command takes. Running it
-     by hand: `bash .claude/hooks/na/L017.sh --run`.
+     always stale and `run-x && git commit` fires every time. Files come
+     from git, so nothing in `.gitignore` is watched. Running it by hand:
+     `bash .claude/hooks/na/L017.sh --run`. The worked example is
+     `examples/browser-boot` in the tool repo.
+
+     **Its settings entry needs a `"timeout"`, in seconds, longer than the
+     command takes.** Claude Code's default kills a slow hook, and a killed
+     hook records nothing and looks installed:
+
+     ```json
+     { "type": "command", "if": "Bash(git commit *)", "timeout": 180,
+       "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/L017.sh" }
+     ```
    - **Self-test with `NA_DRY_RUN=1`.** Pipe a fake payload through the script
      four ways: a non-commit command (silent), a clean tree (silent), the bug
      reintroduced (`ask`, naming the file), and `git -C . commit` (still
@@ -247,9 +257,14 @@ LESSONS.md                          the rules Claude reads (small, capped)
 .claude/never-again/state.json      lesson index, hook modes
 .claude/never-again/archive/L###.md the full story, read on demand only
 .claude/never-again/fires.log       one line per hook fire with its outcome and grade
-.claude/never-again/hook-template.sh what a new hook starts from
+.claude/never-again/hook-template.sh what a new check hook starts from
+.claude/never-again/hook-verify-template.sh what a new verify hook starts from
+.claude/never-again/lessons-template.md what a package LESSONS.md starts from
+.claude/never-again/verified/       one manifest per verify hook — local, gitignored
 .claude/hooks/na/L###.sh            the enforcement scripts
 .claude/hooks/na/na-lib.sh          shared by every hook: payload, mode, logging, decision
+.claude/hooks/na/na-verify.sh       the verify engine every verify hook sources
+.claude/hooks/na/na-manifest.py     what na-verify.sh compares the tree with
 .claude/hooks/na/_after.sh          records that a warned commit went ahead
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
 ```

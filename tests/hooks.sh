@@ -214,38 +214,77 @@ check "and loads from inside the package"  '(cd packages/api && CLAUDE_PROJECT_D
 
 echo
 echo "=== a verify-shaped hook runs the check itself ==="
-# The check: fail when any .txt file contains BROKEN. Any command works here;
-# a test suite or a browser boot is the same shape.
-printf '#!/bin/sh\n! grep -rl BROKEN --include=*.txt . >/dev/null\n' > check.sh
+# The check: fail when any .txt file contains BROKEN, and count its runs. Any
+# command works here; a test suite or a browser boot is the same shape.
+printf '#!/bin/sh\necho run >> runs.log\n! grep -rl BROKEN --include=*.txt --exclude-dir=vendor --exclude-dir=.claude . >/dev/null\n' > check.sh
+printf 'runs.log\nvendor/\n' >> .gitignore
+mkdir -p vendor nested/scripts scripts && echo BROKEN > vendor/ignored.txt && echo x > nested/scripts/deep.txt && echo x > scripts/top.txt
+git add -A >/dev/null 2>&1; git commit -qm "fixture" >/dev/null 2>&1   # before the hook exists: no runner pass
 cp .claude/never-again/hook-verify-template.sh .claude/hooks/na/L002.sh
-sed -i 's/^ID="L000".*/ID="L002"/; s/^RULE=.*/RULE="the smoke check must pass before committing"/' .claude/hooks/na/L002.sh
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/hooks/na/L002.sh'
+s = io.open(p, encoding='utf-8').read().replace('ID="L000"', 'ID="L002"').replace(
+    'RULE="the check must pass before committing"', 'RULE="the smoke check must pass before committing"')
+io.open(p, 'w', encoding='utf-8', newline='\n').write(s)
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8'))
+st['lessons']['L002'] = {"form": "hook", "mode": "warn", "hook": ".claude/hooks/na/L002.sh",
+                         "verify": {"run": "sh check.sh", "watch": ".txt", "skip": "scripts"}}
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+V=".claude/hooks/na/L002.sh"; VM=".claude/never-again/verified/L002"
+firev() { HOOK="$V" NA_DRY_RUN=1 fire "git commit -m x"; }
+runs() { [ -f runs.log ] && grep -c . runs.log || echo 0; }
+check "never verified: runs the check, passes, silent" '[ -z "$(firev)" ] && [ -f "$VM" ] && [ "$(runs)" -eq 1 ]'
+check "string config is one item, not characters" 'grep -q "a.txt" "$VM" && ! grep -q "check.sh" "$VM"'
+check "gitignored files are never watched"    '! grep -q "vendor/ignored.txt" "$VM"'
+check "skip is a root prefix, nested kept"    '! grep -q "scripts/top.txt" "$VM" && grep -q "nested/scripts/deep.txt" "$VM"'
+check "unchanged: fast path, no run"          '[ -z "$(firev)" ] && [ "$(runs)" -eq 1 ]'
+touch -m a.txt
+check "touched but identical: still no run"   '[ -z "$(firev)" ] && [ "$(runs)" -eq 1 ]'
+echo BROKEN > g.txt
+OUT="$(firev)"
+check "changed and failing: asks"             'echo "$OUT" | grep -q "\"ask\""'
+check "names the command that failed"         'echo "$OUT" | grep -q "sh check.sh failed"'
+echo fine > g.txt
+check "fixed: runs again, passes, silent"     '[ -z "$(firev)" ] && grep -q "g.txt" "$VM" && [ ! -f "$VM.next" ]'
+check "manifest dir is gitignored"            'git check-ignore -q "$VM"'
+echo BROKEN > g.txt
+bash "$V" --run >/dev/null 2>&1; RC=$?
+check "--run reports a failure"               '[ $RC -ne 0 ]'
+echo fine > g.txt
+check "--run records a pass"                  'bash "$V" --run 2>&1 | grep -q "recorded"'
+echo BROKEN > g.txt; : > runs.log
+printf '{"tool_input":{"command":"git commit -m x"},"tool_use_id":"tv"}' | bash "$V" >/dev/null   # a real fire, left pending
+git add g.txt
+ERR="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"
+check "git after Claude asked: quiet, no second run" '[ -z "$ERR" ] && [ "$(runs)" -eq 1 ]'
+git reset -q g.txt; echo fine > g.txt; : > "$LOG"
 "$PYBIN" - <<'PY'
 import json, io
 p = '.claude/never-again/state.json'
-s = json.load(io.open(p, encoding='utf-8'))
-s['lessons']['L002'] = {"form": "hook", "mode": "warn", "hook": ".claude/hooks/na/L002.sh",
-                        "verify": {"run": "sh check.sh", "watch": [".txt"], "skip": ["docs"]}}
-json.dump(s, io.open(p, 'w', encoding='utf-8'), indent=2)
+st = json.load(io.open(p, encoding='utf-8')); st['lessons']['L002']['verify'] = {"run": "", "watch": ".txt"}
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
 PY
-V=".claude/hooks/na/L002.sh"; VM=".claude/never-again/verified/L002"
-firev() { printf '{"tool_input":{"command":"git commit -m x"}}' | NA_DRY_RUN=1 bash "$V"; }
-git add -A >/dev/null 2>&1; git commit -qm "fixture" >/dev/null 2>&1
-check "never verified: runs the check, passes, silent" '[ -z "$(firev)" ] && [ -f "$VM" ]'
-check "manifest lists the watched files"  'grep -q "a.txt" "$VM" && ! grep -q "check.sh" "$VM"'
-check "unchanged: fast path, silent"      '[ -z "$(firev)" ]'
-echo BROKEN > g.txt
-OUT="$(firev)"
-check "changed and failing: asks"         'echo "$OUT" | grep -q "\"ask\""'
-check "names the command that failed"     'echo "$OUT" | grep -q "sh check.sh failed"'
-echo fine > g.txt
-check "fixed: runs again, passes, silent" '[ -z "$(firev)" ] && grep -q "g.txt" "$VM"'
-check "manifest dir is gitignored"        'git check-ignore -q "$VM"'
-echo BROKEN > g.txt
-bash "$V" --run >/dev/null 2>&1; RC=$?
-check "--run reports a failure"           '[ $RC -ne 0 ]'
-echo fine > g.txt
-check "--run records a pass"              'bash "$V" --run 2>&1 | grep -q "recorded"'
-rm -f g.txt check.sh .claude/hooks/na/L002.sh
+check "misconfigured: visible systemMessage"  'firev | grep -q "systemMessage.*verify.run"'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); del st['lessons']['L002']['verify']
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+check "unconfigured: visible systemMessage"   'firev | grep -q "systemMessage.*no verify block"'
+"$PYBIN" $NA retire L002 >/dev/null 2>&1
+check "retire removes the manifest"           '[ ! -f "$VM" ] && [ ! -f "$V" ]'
+rm -f g.txt check.sh runs.log; rm -rf vendor nested scripts
+"$PYBIN" - <<'PY'
+import io, re
+p = '.gitignore'; s = io.open(p, encoding='utf-8').read()
+s = s.replace('runs.log\nvendor/\n', '')
+io.open(p, 'w', encoding='utf-8', newline='\n').write(s)
+PY
+git add -A >/dev/null 2>&1; git commit -qm "teardown" >/dev/null 2>&1
 
 echo
 echo "=== CLAUDE.md.bak stays out of git ==="
@@ -270,9 +309,34 @@ echo
 echo "=== a repo that ignores .claude/ is told ==="
 printf '.claude/\n' >> .gitignore
 OUT7="$(bash "$SRC/install.sh" . 2>&1)"
-check "install warns the hooks stay local" 'echo "$OUT7" | grep -q "NOT shared through git"'
+check "hooks tracked: says new ones get dropped" 'echo "$OUT7" | grep -q "new ones will be dropped"'
+git rm -r -q --cached .claude >/dev/null 2>&1
+OUT7="$(bash "$SRC/install.sh" . 2>&1)"
+check "hooks untracked: warns they stay local" 'echo "$OUT7" | grep -q "NOT shared through git"'
 check "and prints the un-ignore lines"     'echo "$OUT7" | grep -q "!.claude/hooks/na/"'
-sed -i '/^\.claude\/$/d' .gitignore
+check "advice includes verified/"          'echo "$OUT7" | grep -q "never-again/verified/"'
+check "local-only block still written"     'grep -q "CLAUDE.md.bak" .gitignore'
+"$PYBIN" - <<'PY'
+import io
+p = '.gitignore'; s = io.open(p, encoding='utf-8').read().replace('.claude/\n', '')
+io.open(p, 'w', encoding='utf-8', newline='\n').write(s)
+PY
+git add .claude >/dev/null 2>&1
+
+echo
+echo "=== an old gitignore block is upgraded wholesale ==="
+"$PYBIN" - <<'PY'
+import io, re
+p = '.gitignore'; s = io.open(p, encoding='utf-8').read()
+s = re.sub(r"\n*# never-again \(local only\)\n(?:(?:\.claude/never-again/[^\n]*|CLAUDE\.md\.bak)\n)*", "\n", s)
+s = s.rstrip("\n") + "\n\n# never-again (local only)\n.claude/never-again/fires.log\nCLAUDE.md.bak\n"
+io.open(p, 'w', encoding='utf-8', newline='\n').write(s)
+PY
+OUT11="$(bash "$SRC/install.sh" . 2>&1)"
+check "install says it upgraded the block"  'echo "$OUT11" | grep -q "brought up to date"'
+check "verified/ now ignored"               'grep -q "never-again/verified/" .gitignore'
+check "block appears once"                  '[ "$(grep -c "never-again (local only)" .gitignore)" -eq 1 ]'
+check "second run is quiet"                 '! bash "$SRC/install.sh" . 2>&1 | grep -q "brought up to date"'
 
 echo
 echo "=== a static host is told ==="
