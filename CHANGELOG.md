@@ -2,7 +2,10 @@
 
 All notable changes to never-again are recorded here.
 
-## [Unreleased]
+## [0.3.0] — 2026-09-15
+
+The hook format changed: verify-shaped hooks are five-line stubs over a shared
+engine, and the gitignore block moved under `na`. Re-run the installer.
 
 ### Added
 
