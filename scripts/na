@@ -592,7 +592,6 @@ GITIGNORE_UNIGNORE = (
     "!.claude/hooks/", ".claude/hooks/*", "!.claude/hooks/na/",
     "!.claude/never-again/",
     "!.claude/skills/", ".claude/skills/*", "!.claude/skills/never-again/",
-    "!.claude/settings.json",
 ) + GITIGNORE_LINES[:3]
 
 
@@ -632,6 +631,84 @@ def cmd_gitignore(argv):
     text = (text + "\n\n" if text else "") + block
     _write_text(gi, text, nl)
     print(verb)
+    return 0
+
+
+AFTER_CMD = '"$CLAUDE_PROJECT_DIR"/.claude/hooks/na/_after.sh'
+
+
+def _settings_load():
+    if not os.path.isfile(SETTINGS):
+        return {}
+    with open(SETTINGS, encoding="utf-8") as fh:
+        text = fh.read().strip()
+    return json.loads(text) if text else {}
+
+
+def _entries(settings, event):
+    for g in settings.get("hooks", {}).get(event, []) or []:
+        for h in (g or {}).get("hooks", []) or []:
+            yield h.get("command", "").replace("\\", "/")
+
+
+def _add_entry(settings, event, entry):
+    groups = settings.setdefault("hooks", {}).setdefault(event, [])
+    group = next((g for g in groups if g.get("matcher") == "Bash"), None)
+    if group is None:
+        group = {"matcher": "Bash", "hooks": []}
+        groups.append(group)
+    group.setdefault("hooks", []).append(entry)
+
+
+def cmd_register():
+    """Make .claude/settings.json register every never-again hook this repo
+    has: the after-commit resolver, and one PreToolUse entry per commit-time
+    hook lesson in state.json. Merged, never replaced; entries that exist are
+    left as they are. This is what a fresh clone needs, so settings.json
+    itself never has to be shared."""
+    try:
+        settings = _settings_load()
+    except ValueError as exc:
+        print("  settings   .claude/settings.json could not be parsed (%s); register the" % exc)
+        print("             never-again hooks yourself, see README" )
+        return 1
+    added = []
+    for event in ("PostToolUse", "PostToolUseFailure"):
+        if not any("/.claude/hooks/na/_after.sh" in c for c in _entries(settings, event)):
+            _add_entry(settings, event, {"type": "command", "if": "Bash(git commit *)", "command": AFTER_CMD})
+            added.append("_after.sh on " + event)
+    skipped = []
+    try:
+        lessons = load().get("lessons", {})
+    except (OSError, ValueError):
+        lessons = {}
+    for lid, rec in sorted(lessons.items()):
+        if rec.get("form") != "hook" or rec.get("mode") == "retired":
+            continue
+        script = os.path.join(HOOKS, lid + ".sh")
+        if not os.path.isfile(script):
+            continue
+        if any("/na/%s.sh" % lid in c for c in _entries(settings, "PreToolUse")):
+            continue
+        text = open(script, encoding="utf-8", errors="replace").read()
+        if 'TRIGGER="commit"' not in text:
+            skipped.append(lid)
+            continue
+        entry = {"type": "command", "if": "Bash(git commit *)",
+                 "command": '"$CLAUDE_PROJECT_DIR"/.claude/hooks/na/%s.sh' % lid}
+        if "na-verify.sh" in text:
+            entry["timeout"] = 180
+        _add_entry(settings, "PreToolUse", entry)
+        added.append(lid)
+    if added:
+        with open(SETTINGS, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(settings, fh, indent=2)
+            fh.write("\n")
+        print("  settings   registered %s" % ", ".join(added))
+    else:
+        print("  settings   every never-again hook already registered")
+    if skipped:
+        print("  settings   not registered (not commit-time; add their entries yourself): %s" % ", ".join(skipped))
     return 0
 
 
@@ -1009,6 +1086,8 @@ def main():
         return cmd_gitignore(args[1:])
     if cmd == "_lessons-report":
         return cmd_lessons_report()
+    if cmd == "_register":
+        return cmd_register()
     if cmd == "import":
         return cmd_import(args[1:])
     if len(args) < 2:

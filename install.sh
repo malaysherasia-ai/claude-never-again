@@ -83,48 +83,6 @@ cp "$SRC/templates/pre-commit"      "$DEST/.claude/hooks/na/pre-commit"
 chmod +x "$DEST/.claude/hooks/na/_after.sh" "$DEST/.claude/hooks/na/pre-commit"
 echo "  hooks      .claude/hooks/na/na-lib.sh, na-verify.sh, na-manifest.py, _after.sh, pre-commit"
 
-# --- settings.json: the after-commit resolver --------------------------------
-# Merged, never replaced. Idempotent: an entry pointing at _after.sh is left as
-# it is. The skill merges each lesson's own hook the same way.
-SETTINGS="$DEST/.claude/settings.json"
-"$PY" - "$SETTINGS" <<'PYEOF'
-import json, os, sys
-path = sys.argv[1]
-settings = {}
-if os.path.isfile(path):
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read().strip()
-    if text:
-        try:
-            settings = json.loads(text)
-        except ValueError as exc:
-            sys.exit("  settings   .claude/settings.json could not be parsed (%s); "
-                     "register .claude/hooks/na/_after.sh on PostToolUse yourself" % exc)
-hooks = settings.setdefault("hooks", {})
-entry = {"type": "command", "if": "Bash(git commit *)",
-         "command": '"$CLAUDE_PROJECT_DIR"/.claude/hooks/na/_after.sh'}
-added = 0
-for event in ("PostToolUse", "PostToolUseFailure"):
-    groups = hooks.setdefault(event, [])
-    present = any("/.claude/hooks/na/_after.sh" in (h.get("command", "").replace("\\", "/"))
-                  for g in groups for h in (g or {}).get("hooks", []) or [])
-    if present:
-        continue
-    group = next((g for g in groups if g.get("matcher") == "Bash"), None)
-    if group is None:
-        group = {"matcher": "Bash", "hooks": []}
-        groups.append(group)
-    group.setdefault("hooks", []).append(dict(entry))
-    added += 1
-if added:
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        json.dump(settings, fh, indent=2)
-        fh.write("\n")
-    print("  settings   after-commit resolver registered (%d event%s)" % (added, "" if added == 1 else "s"))
-else:
-    print("  settings   after-commit resolver already registered")
-PYEOF
-
 # --- git pre-commit -----------------------------------------------------------
 # A stub in git's hooks directory hands every commit to the runner, so a hook
 # guards commits from any tool or terminal, not only Claude Code's Bash tool.
@@ -211,6 +169,13 @@ JSON
   echo "  state      state.json created"
 fi
 
+# --- settings.json ---------------------------------------------------------
+# Merged, never replaced. `na _register` adds the after-commit resolver and a
+# PreToolUse entry for every commit-time hook lesson in state.json that is
+# not registered yet. That is what a fresh clone needs, so settings.json
+# itself never has to travel through git.
+CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _register || true
+
 # --- CLAUDE.md --------------------------------------------------------------
 # Merge, never clobber. The block is delimited so it can be replaced or removed.
 CLAUDE="$DEST/CLAUDE.md"
@@ -269,11 +234,14 @@ if git -C "$DEST" check-ignore -q .claude/hooks/na/L000.sh 2>/dev/null; then
   if git -C "$DEST" ls-files --error-unmatch .claude/hooks/na >/dev/null 2>&1; then
     echo "  gitignore  .claude/ is ignored but the hooks are tracked: existing hooks are shared,"
     echo "             new ones will be dropped by 'git add'. To share them, replace the"
-    echo "             .claude/ line in .gitignore with:"
+    echo "             .claude/ line in .gitignore with the lines below. settings.json stays"
+    echo "             yours: the installer re-registers the hooks from state.json on a clone."
   else
     echo "  gitignore  .claude/ is ignored in this repo, so the hooks, state.json and skill"
     echo "             stay on this machine and are NOT shared through git. LESSONS.md still is."
-    echo "             To share the hooks too, replace the .claude/ line in .gitignore with:"
+    echo "             To share the hooks too, replace the .claude/ line in .gitignore with the"
+    echo "             lines below. settings.json stays yours: the installer re-registers the"
+    echo "             hooks from state.json on a clone."
   fi
   CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _gitignore --advice | sed 's/^/               /'
 fi
