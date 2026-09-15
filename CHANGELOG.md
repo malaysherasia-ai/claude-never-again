@@ -2,7 +2,15 @@
 
 All notable changes to never-again are recorded here.
 
-## [Unreleased]
+## [1.0.0] — 2026-09-15
+
+What 1.0 means here: the formats are frozen. The `fires.log` columns, the
+`state.json` fields, the five-line hook stub over `na-lib.sh` and
+`na-verify.sh`, the one dispatcher entry, and the `LESSONS.md` rule line will
+not change without a major version bump. Everything below was built and
+tested on three platforms in the run-up; what has not yet happened is a hook
+promoted to blocking on a real project, and that is the honest state of it.
+
 
 ### Added
 
