@@ -2,7 +2,12 @@
 
 All notable changes to never-again are recorded here.
 
-## [Unreleased]
+## [0.4.0] — 2026-09-15
+
+Two days of fixes from the first installs on repositories that were not ours,
+and a seven-angle review of everything since 0.2.0. Re-run the installer: it
+registers every hook from state.json, so settings.json no longer needs to
+be shared.
 
 ### Fixed
 
