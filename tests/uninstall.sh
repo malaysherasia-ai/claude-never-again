@@ -8,7 +8,7 @@
 # a rule in it. All of those must survive.
 #
 #   bash tests/uninstall.sh [tmpdir]
-set -uo pipefail
+set -u    # no pipefail: `producer | grep -q` would fail on the producer's broken pipe
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 T="${1:-${TMPDIR:-/tmp}/na-uninstall-test}"
