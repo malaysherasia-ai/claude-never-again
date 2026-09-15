@@ -3,9 +3,9 @@
 # from .git/hooks/pre-commit, so commit-time hooks apply to every commit: from
 # Claude Code's Bash tool, from any other tool, and from a person at a shell.
 #
-# Runs every .claude/hooks/na/L*.sh whose TRIGGER is "commit" with NA_EVENT=git.
-# In warn mode a hook prints its reason and the commit goes ahead; in block
-# mode the commit is refused. Retired hooks are silent.
+# Hands the commit to the dispatcher with NA_EVENT=git. In warn mode a hook
+# prints its reason and the commit goes ahead; in block mode the commit is
+# refused. Retired hooks are silent.
 set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 # Git Bash reports /c/...; the Python and Node the hooks call need C:/... .
@@ -13,13 +13,5 @@ case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && ROOT="$(cygpath -m "$ROOT")" ;;
 esac
 export CLAUDE_PROJECT_DIR="$ROOT" NA_EVENT=git
-# Resolve the interpreter once here rather than once per hook.
-source "$ROOT/.claude/hooks/na/na-lib.sh" 2>/dev/null && NA_PY="$(na_python)" && export NA_PY
-rc=0
-for h in "$ROOT"/.claude/hooks/na/L[0-9]*.sh; do
-  [ -f "$h" ] || continue
-  case "$(basename "$h")" in *-*) continue ;; esac     # companions, not hooks
-  grep -q '^TRIGGER="commit"' "$h" || continue
-  bash "$h" </dev/null || rc=1
-done
-exit $rc
+[ -f "$ROOT/.claude/hooks/na/dispatch" ] || exit 0
+exec bash "$ROOT/.claude/hooks/na/dispatch" </dev/null

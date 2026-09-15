@@ -27,6 +27,8 @@ Everything here is counted, not reasoned. It costs no tokens by design.
   na import       list the notes files already in this repo that the skill can
                   turn into lessons, and what has been imported so far
   na import --mark PATH [--filed N]   record that PATH was imported
+  na index        every live hook with its mode, trigger and watched extensions,
+                  which is what the dispatcher runs from
 
 Fires are recorded by the hooks themselves. What happened next is recorded too:
 "declined" when the person stopped at the warning, "proceeded" when they went
@@ -43,7 +45,9 @@ from collections import Counter
 # Windows consoles default to cp1252, which cannot encode the box-drawing and
 # em-dash characters used below, and files default to the same codec.
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # newline="\n": shell callers split our output on "\n", and a text-mode
+    # stdout on Windows would otherwise glue a "\r" to every last field.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
@@ -634,6 +638,55 @@ def cmd_gitignore(argv):
     return 0
 
 
+DISPATCH_CMD = '"$CLAUDE_PROJECT_DIR"/.claude/hooks/na/dispatch'
+
+
+def hook_index():
+    """One row per hook that can run: (id, mode, trigger, watch, scope).
+    Read from state.json and the scripts' TRIGGER/WATCH lines. This is the
+    index the dispatcher runs from; it is rebuilt on every call, which is one
+    process however many hooks there are."""
+    try:
+        lessons = load().get("lessons", {})
+    except (OSError, ValueError):
+        return []
+    rows = []
+    for lid, rec in sorted(lessons.items()):
+        if rec.get("form") != "hook" or rec.get("mode") == "retired":
+            continue
+        script = os.path.join(HOOKS, lid + ".sh")
+        if not os.path.isfile(script):
+            continue
+        trigger, watch = "commit", ""
+        try:
+            for ln in open(script, encoding="utf-8", errors="replace"):
+                if ln.startswith('TRIGGER="'):
+                    trigger = ln.split('"')[1]
+                elif ln.startswith('WATCH="'):
+                    watch = ln.split('"')[1].strip()
+        except OSError:
+            continue
+        rows.append((lid, rec.get("mode", "warn"), trigger, watch or "-", rec.get("scope", "-")))
+    return rows
+
+
+def cmd_index(public):
+    rows = hook_index()
+    if not public:
+        for lid, mode, trigger, watch, _scope in rows:
+            print("%s\t%s\t%s\t%s" % (lid, mode, trigger, watch))
+        return 0
+    print()
+    print("  hooks the dispatcher runs from")
+    print("  " + "-" * 60)
+    if not rows:
+        print("  none yet")
+    for lid, mode, trigger, watch, scope in rows:
+        print("  %-6s %-6s %-8s %-10s watch %s" % (lid, mode, trigger, scope, watch))
+    print()
+    return 0
+
+
 AFTER_CMD = '"$CLAUDE_PROJECT_DIR"/.claude/hooks/na/_after.sh'
 
 
@@ -677,29 +730,26 @@ def cmd_register():
         if not any("/.claude/hooks/na/_after.sh" in c for c in _entries(settings, event)):
             _add_entry(settings, event, {"type": "command", "if": "Bash(git commit *)", "command": AFTER_CMD})
             added.append("_after.sh on " + event)
-    skipped = []
-    try:
-        lessons = load().get("lessons", {})
-    except (OSError, ValueError):
-        lessons = {}
-    for lid, rec in sorted(lessons.items()):
-        if rec.get("form") != "hook" or rec.get("mode") == "retired":
-            continue
-        script = os.path.join(HOOKS, lid + ".sh")
-        if not os.path.isfile(script):
-            continue
-        if any("/na/%s.sh" % lid in c for c in _entries(settings, "PreToolUse")):
-            continue
-        text = open(script, encoding="utf-8", errors="replace").read()
-        if 'TRIGGER="commit"' not in text:
-            skipped.append(lid)
-            continue
-        entry = {"type": "command", "if": "Bash(git commit *)",
-                 "command": '"$CLAUDE_PROJECT_DIR"/.claude/hooks/na/%s.sh' % lid}
-        if "na-verify.sh" in text:
-            entry["timeout"] = 180
-        _add_entry(settings, "PreToolUse", entry)
-        added.append(lid)
+    # One dispatcher entry replaces one entry per hook. Per-hook entries from
+    # earlier releases are dropped, or every hook would run twice.
+    if not any("/.claude/hooks/na/dispatch" in c for c in _entries(settings, "PreToolUse")):
+        _add_entry(settings, "PreToolUse", {"type": "command", "if": "Bash(git commit *)",
+                                            "timeout": 600, "command": DISPATCH_CMD})
+        added.append("dispatch on PreToolUse")
+    dropped = 0
+    for g in settings.get("hooks", {}).get("PreToolUse", []) or []:
+        keep = []
+        for h in (g or {}).get("hooks", []) or []:
+            c = h.get("command", "").replace("\\", "/")
+            if re.search(r"/\.claude/hooks/na/L\d+\.sh", c):
+                dropped += 1
+            else:
+                keep.append(h)
+        g["hooks"] = keep
+    if dropped:
+        settings["hooks"]["PreToolUse"] = [g for g in settings["hooks"]["PreToolUse"] if g.get("hooks")]
+        added.append("dropped %d per-hook entr%s the dispatcher replaces" % (dropped, "y" if dropped == 1 else "ies"))
+    skipped = [lid for lid, _m, trigger, _w, _s in hook_index() if trigger != "commit"]
     if added:
         with open(SETTINGS, "w", encoding="utf-8", newline="\n") as fh:
             json.dump(settings, fh, indent=2)
@@ -708,7 +758,7 @@ def cmd_register():
     else:
         print("  settings   every never-again hook already registered")
     if skipped:
-        print("  settings   not registered (not commit-time; add their entries yourself): %s" % ", ".join(skipped))
+        print("  settings   not commit-time, so not reached by the dispatcher's Bash entry: %s" % ", ".join(skipped))
     return 0
 
 
@@ -1088,6 +1138,10 @@ def main():
         return cmd_lessons_report()
     if cmd == "_register":
         return cmd_register()
+    if cmd == "_index":
+        return cmd_index(False)
+    if cmd == "index":
+        return cmd_index(True)
     if cmd == "import":
         return cmd_import(args[1:])
     if len(args) < 2:

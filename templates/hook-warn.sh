@@ -22,7 +22,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
 
 ID="L000"                       # <-- lesson id
 RULE="one-line rule text"       # <-- shown when this fires
-TRIGGER="commit"                # commit | any   (the git runner picks up "commit")
+TRIGGER="commit"                # commit | any
+WATCH=""                        # e.g. ".css .html": only run when such a file changed
 
 na_begin "$ID" "$TRIGGER"       # sets NA_ROOT, NA_PY, NA_CMD, NA_FILE; exits if not our trigger
 

@@ -79,6 +79,12 @@ na_begin() {
     exit 0
   fi
 
+  # Under the dispatcher the payload was parsed once and exported; there is
+  # no stdin to read and nothing to decide.
+  if [ -n "${NA_DISPATCHED:-}" ]; then
+    NA_CMD="${NA_CMD:-}"; NA_FILE="${NA_FILE:-}"; NA_TOOL_USE_ID="${NA_TOOL_USE_ID:-}"
+    return 0
+  fi
   NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""
   if [ "$NA_SOURCE" = "claude" ]; then
     NA_PAYLOAD="$(cat)"
@@ -133,7 +139,9 @@ na_is_chain() {
 # PreToolUse time nothing is staged yet. Never the whole tree.
 na_changed_files() {
   local list
-  if [ "$NA_SOURCE" = "git" ]; then
+  if [ -n "${NA_CHANGED_ALL+x}" ]; then
+    list="$NA_CHANGED_ALL"              # the dispatcher listed them once
+  elif [ "$NA_SOURCE" = "git" ]; then
     list="$(git -C "$NA_ROOT" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)"
   else
     list="$(git -C "$NA_ROOT" status --porcelain=v1 -uall 2>/dev/null \
@@ -160,8 +168,15 @@ except Exception:
   printf '%s' "$v"
 }
 
-# na_mode — the hook's mode from state.json: warn, block, or retired.
+# na_mode — the hook's mode from state.json: warn, block, or retired. Under
+# the dispatcher every mode arrived in NA_MODES ("L001=warn;L002=block;").
 na_mode() {
+  if [ -n "${NA_MODES:-}" ]; then
+    local all=";$NA_MODES" m
+    case "$all" in
+      *";$NA_ID="*) m="${all#*;$NA_ID=}"; m="${m%%;*}"; printf '%s' "$m"; return 0 ;;
+    esac
+  fi
   na_lesson_field mode warn
 }
 

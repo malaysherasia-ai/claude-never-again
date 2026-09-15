@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# never-again dispatcher. Installed as .claude/hooks/na/dispatch. One entry in
+# settings.json points here (PreToolUse, matcher Bash), and git's pre-commit
+# runner calls it with NA_EVENT=git. It does once what every hook used to do
+# for itself: read the payload, find an interpreter, decide whether this is a
+# commit, list the changed files, read every hook's mode. Then it runs only
+# the hooks whose trigger and watched extensions match, and merges their
+# answers into one decision. Ten hooks cost one setup, not ten.
+#
+# The index it runs from is `na _index`: one line per live hook with its
+# mode, trigger and WATCH list, read from state.json and the scripts.
+set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
+
+if ! na_env; then
+  if [ "${NA_EVENT:-}" = "git" ]; then
+    echo "never-again: no working python found; no hook ran. Install Python 3.7+ or set NA_PYTHON." >&2
+  else
+    printf '{"systemMessage":"never-again: no working python found; no hook ran. Install Python 3.7+ or set NA_PYTHON."}\n'
+  fi
+  exit 0
+fi
+export NA_PY NA_DISPATCHED=1
+
+NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""
+if [ "$NA_SOURCE" = "claude" ]; then
+  NA_PAYLOAD="$(cat)"
+  eval "$(printf '%s' "$NA_PAYLOAD" | "$NA_PY" -c '
+import json, sys, shlex
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+ti = d.get("tool_input") or {}
+print("NA_CMD=%s" % shlex.quote(str(ti.get("command", ""))))
+print("NA_FILE=%s" % shlex.quote(str(ti.get("file_path", ""))))
+print("NA_TOOL_USE_ID=%s" % shlex.quote(str(d.get("tool_use_id", ""))))
+' 2>/dev/null || true)"
+fi
+export NA_CMD NA_FILE NA_TOOL_USE_ID
+
+IS_COMMIT=0
+if [ "$NA_SOURCE" = "git" ] || na_is_commit "$NA_CMD"; then IS_COMMIT=1; fi
+
+# The index: id, mode, trigger, watch. One spawn, however many hooks.
+INDEX="$("$NA_PY" "$NA_CLI" _index 2>/dev/null)" || INDEX=""
+INDEX="${INDEX//$'\r'/}"
+[ -z "$INDEX" ] && exit 0
+
+# Modes for every hook in one variable, so na_mode never spawns again.
+NA_MODES="$(printf '%s\n' "$INDEX" | awk -F'\t' '{printf "%s=%s;", $1, $2}')"
+export NA_MODES
+
+# Changed files once; na_changed_files in each hook filters this list.
+NA_CHANGED_ALL="$(na_changed_files)"
+export NA_CHANGED_ALL
+
+HOOKS_DIR="$NA_ROOT/.claude/hooks/na"
+OUTS=""
+RC=0
+while IFS=$'\t' read -r id mode trigger watch; do
+  [ -n "$id" ] || continue
+  case "$mode" in warn|block) ;; *) continue ;; esac
+  if [ "$trigger" = "commit" ] && [ "$IS_COMMIT" -eq 0 ]; then continue; fi
+  if [ -n "$watch" ] && [ "$watch" != "-" ]; then
+    hit=0
+    for ext in $watch; do
+      if printf '%s\n' "$NA_CHANGED_ALL" | grep -q "${ext//./\\.}\$"; then hit=1; break; fi
+    done
+    [ "$hit" -eq 1 ] || continue
+  fi
+  script="$HOOKS_DIR/$id.sh"
+  [ -f "$script" ] || continue
+  if [ "$NA_SOURCE" = "git" ]; then
+    bash "$script" </dev/null || RC=1
+  else
+    out="$(bash "$script" </dev/null)"
+    [ -n "$out" ] && OUTS="$OUTS$out"$'\n'
+  fi
+done <<<"$INDEX"
+
+[ "$NA_SOURCE" = "git" ] && exit "$RC"
+[ -z "$OUTS" ] && exit 0
+
+# Merge: deny beats ask; reasons are joined; system messages are joined.
+printf '%s' "$OUTS" | "$NA_PY" -c '
+import json, sys
+decision, reasons, notes = None, [], []
+for line in sys.stdin.read().splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        d = json.loads(line)
+    except ValueError:
+        continue
+    h = d.get("hookSpecificOutput") or {}
+    if h.get("permissionDecision") == "deny":
+        decision = "deny"
+    elif h.get("permissionDecision") == "ask" and decision != "deny":
+        decision = "ask"
+    if h.get("permissionDecisionReason"):
+        reasons.append(h["permissionDecisionReason"])
+    if d.get("systemMessage"):
+        notes.append(d["systemMessage"])
+out = {}
+if decision:
+    out["hookSpecificOutput"] = {"hookEventName": "PreToolUse",
+                                "permissionDecision": decision,
+                                "permissionDecisionReason": " | ".join(reasons)}
+if notes:
+    out["systemMessage"] = " | ".join(notes)
+if out:
+    print(json.dumps(out))
+'
+exit 0

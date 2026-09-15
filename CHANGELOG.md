@@ -2,6 +2,24 @@
 
 All notable changes to never-again are recorded here.
 
+## [Unreleased]
+
+### Changed
+
+- **One dispatcher instead of one entry per hook.** `.claude/hooks/na/dispatch`
+  is the only PreToolUse entry. It reads the payload once, resolves Python
+  once, lists the changed files once, reads every hook's mode in one call
+  (`na _index`), runs only the hooks whose `TRIGGER` and `WATCH` match the
+  change, and merges their answers into one decision: deny beats ask,
+  reasons joined. The git runner hands the commit to the same dispatcher.
+  Filing a hook no longer touches `settings.json`; `na _register` installs
+  the dispatcher entry and drops the per-hook entries earlier releases
+  wrote. `na index` shows what will run. On a repo with four hooks this
+  takes per-commit hook cost from four setups to one; with two hundred it
+  stays one.
+- Hook scripts may declare `WATCH=".css .html"`; the dispatcher skips them
+  when no such file changed.
+
 ## [0.4.0] — 2026-09-15
 
 Two days of fixes from the first installs on repositories that were not ours,

@@ -256,6 +256,13 @@ It also looks at the files that changed rather than the whole tree, records
 what happened after it fired, and stays out of `fires.log` during self-tests
 (`NA_DRY_RUN=1`).
 
+**One process, however many hooks.** Claude Code runs one entry, the
+dispatcher. It reads the commit once, finds Python once, lists the changed
+files once, and asks `na index` which hooks exist, in which mode, watching
+which file types. A hook that watches `.css` is not run for a commit that
+touched none. Ten hooks or two hundred cost one setup; only the checks that
+apply run, and their answers come back as one decision.
+
 ---
 
 ## What gets installed
@@ -265,11 +272,12 @@ LESSONS.md                          the rules Claude reads (small, capped, order
 CLAUDE.md                           one marked block appended — never overwritten
 .claude/skills/never-again/         the skill
 .claude/hooks/na/L###.sh            the enforcement scripts
+.claude/hooks/na/dispatch           the one registered hook: runs the others from na index
 .claude/hooks/na/na-lib.sh          shared by every hook
 .claude/hooks/na/na-verify.sh       the "X must pass before commit" engine, plus na-manifest.py
 .claude/hooks/na/_after.sh          records that a warned commit went ahead
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
-.claude/settings.json               _after.sh registered on PostToolUse — merged, never replaced
+.claude/settings.json               two entries, dispatch and _after.sh — merged, never replaced
 .git/hooks/pre-commit               a two-line stub, only if you had none
 .claude/never-again/
   ├── na                            the stats CLI  (na.cmd for PowerShell)
@@ -388,6 +396,7 @@ na why L001       # read the full story behind a rule
 na retire L001    # drop the line, deregister the hook, keep the archive
 na demote L001    # blocking back to warn
 na import         # notes files already in the repo, and what was imported
+na index          # every live hook: mode, trigger, scope, watched extensions
 ```
 
 On Windows, `.claude\never-again\na.cmd` runs the same thing from PowerShell
