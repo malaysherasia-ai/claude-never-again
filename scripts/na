@@ -592,6 +592,7 @@ GITIGNORE_UNIGNORE = (
     "!.claude/hooks/", ".claude/hooks/*", "!.claude/hooks/na/",
     "!.claude/never-again/",
     "!.claude/skills/", ".claude/skills/*", "!.claude/skills/never-again/",
+    "!.claude/settings.json",
 ) + GITIGNORE_LINES[:3]
 
 

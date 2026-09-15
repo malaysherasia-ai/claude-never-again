@@ -296,6 +296,7 @@ cat <<'EOF'
 
 Done. LESSONS.md and the hooks are meant to be committed — they are team
 knowledge. Only fires.log, the verified manifests and CLAUDE.md.bak stay local.
+A fresh clone runs this installer once: git does not clone its hooks folder.
 
 Next: fix a bug, then tell Claude "never again". If the repo already has
 notes (na import lists them), tell Claude "import the existing notes with the

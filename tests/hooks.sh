@@ -402,6 +402,7 @@ io.open(p, 'w', encoding='utf-8', newline='\n').write(s.replace('.claude/\n', ad
 PY
 check "applying the advice really un-ignores the hooks" '! git check-ignore -q .claude/hooks/na/L000.sh'
 check "and keeps the local files ignored"  'git check-ignore -q .claude/never-again/fires.log'
+check "and shares the hook registrations"  '! git check-ignore -q .claude/settings.json'
 "$PYBIN" - <<'PY'
 import io, subprocess
 p = '.gitignore'; s = io.open(p, encoding='utf-8').read()

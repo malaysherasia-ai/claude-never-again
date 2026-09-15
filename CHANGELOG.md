@@ -8,6 +8,12 @@ All notable changes to never-again are recorded here.
 
 From the first import run on a client repository (Windows 11):
 
+- **The gitignore replacement now shares `.claude/settings.json` too**, so
+  the Claude Code hook registrations travel with the hook scripts. The
+  README states the rule plainly: rules, hooks and state travel with git;
+  the wiring (git's hooks folder) does not, so a fresh clone runs the
+  installer once.
+
 - **An emoji in the commit message blinded every hook on Windows.** The
   command extractor printed through a cp1252 pipe and crashed, so the hook
   saw an empty command. Every Python the library spawns now writes UTF-8.
