@@ -128,40 +128,51 @@ PYEOF
 # --- git pre-commit -----------------------------------------------------------
 # A stub in git's hooks directory hands every commit to the runner, so a hook
 # guards commits from any tool or terminal, not only Claude Code's Bash tool.
-# An existing pre-commit hook is never edited; we say what line to add.
+# A pre-commit hook we did not write is never edited; we say what to add. A
+# stub we wrote is rewritten only if it is exactly a stub we wrote, so lines
+# a person added to it survive.
+na_stub() {
+  cat <<'SHEOF'
+#!/bin/sh
+# never-again pre-commit stub (managed by install.sh; uninstall removes it)
+r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
+if [ ! -f "$r" ]; then
+  echo "never-again: .claude/hooks/na/pre-commit is missing, so no hook ran. Re-run install.sh, or delete .git/hooks/pre-commit." >&2
+  exit 0
+fi
+exec "$r" "$@"
+SHEOF
+}
+na_old_stub() {
+  cat <<'SHEOF'
+#!/bin/sh
+# never-again pre-commit stub (managed by install.sh; uninstall removes it)
+exec "$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit" "$@"
+SHEOF
+}
+na_old_stub_2() {
+  cat <<'SHEOF'
+#!/bin/sh
+# never-again pre-commit stub (managed by install.sh; uninstall removes it)
+r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
+[ -f "$r" ] || exit 0
+exec "$r" "$@"
+SHEOF
+}
 if HOOKDIR="$(git -C "$DEST" rev-parse --git-path hooks 2>/dev/null)"; then
   case "$HOOKDIR" in /*|[A-Za-z]:*) ;; *) HOOKDIR="$DEST/$HOOKDIR" ;; esac
   mkdir -p "$HOOKDIR"
   STUB="$HOOKDIR/pre-commit"
   if [ ! -f "$STUB" ]; then
-    # If someone deletes .claude/ by hand instead of running uninstall, the
-    # stub must not fail every commit from then on. No runner, no opinion.
-    cat >"$STUB" <<'SHEOF'
-#!/bin/sh
-# never-again pre-commit stub (managed by install.sh; uninstall removes it)
-r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
-[ -f "$r" ] || exit 0
-exec "$r" "$@"
-SHEOF
-    chmod +x "$STUB"
+    na_stub >"$STUB"; chmod +x "$STUB"
     echo "  git        pre-commit stub installed"
-  elif grep -q "never-again pre-commit stub" "$STUB"; then
-    # Ours. Rewrite it so an older stub picks up the missing-runner guard.
-    if ! grep -q '\[ -f "\$r" \]' "$STUB"; then
-      cat >"$STUB" <<'SHEOF'
-#!/bin/sh
-# never-again pre-commit stub (managed by install.sh; uninstall removes it)
-r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
-[ -f "$r" ] || exit 0
-exec "$r" "$@"
-SHEOF
-      chmod +x "$STUB"
-      echo "  git        pre-commit stub upgraded"
-    else
-      echo "  git        pre-commit stub already in place"
-    fi
+  elif [ "$(cat "$STUB")" = "$(na_stub)" ]; then
+    echo "  git        pre-commit stub already in place"
+  elif [ "$(cat "$STUB")" = "$(na_old_stub)" ] || [ "$(cat "$STUB")" = "$(na_old_stub_2)" ]; then
+    na_stub >"$STUB"; chmod +x "$STUB"
+    echo "  git        pre-commit stub upgraded"
   elif grep -q "never-again" "$STUB"; then
-    echo "  git        pre-commit already calls never-again"
+    echo "  git        pre-commit already calls never-again (edited by hand, left alone)"
   else
     echo "  git        you already have a pre-commit hook; add this line to it:"
     echo '             "$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit" || exit 1'
@@ -174,30 +185,9 @@ fi
 if [ -f "$DEST/LESSONS.md" ]; then
   # Many people kept a LESSONS.md long before this tool. It is theirs, so it
   # is never edited. But notes in their own words are invisible to `na`: not
-  # counted, not capped, not sorted, not enforced. Say so, and say what to do.
-  "$PY" - "$DEST/LESSONS.md" <<'PYEOF'
-import re, sys
-rule = re.compile(r"^\s*-\s+\[[^\]]+\]\s+.+\(L\d+\)\s*$")
-lines = open(sys.argv[1], encoding="utf-8", errors="replace").read().split("\n")
-# A file made from our template carries a marker; its header prose above the
-# marker is ours, not the person's notes. Only look below it.
-marker = next((i for i, ln in enumerate(lines) if "managed by the never-again skill" in ln), None)
-if marker is not None:
-    lines = lines[marker + 1:]
-filed = sum(1 for ln in lines if rule.match(ln))
-other = sum(1 for ln in lines if ln.strip() and not ln.lstrip().startswith(("#", "<!--"))
-            and not rule.match(ln) and ln.strip() != "---")
-if other and not filed:
-    print("  lessons    LESSONS.md already exists — left untouched")
-    print("             It holds %d line(s) of notes in your own words. Claude will read them," % other)
-    print("             but never-again cannot count, cap, sort or enforce them. To bring them")
-    print("             in, tell Claude once:")
-    print('               "read LESSONS.md and refile each note through the never-again skill"')
-elif other:
-    print("  lessons    LESSONS.md already exists — left untouched (%d filed, %d note(s) in your own words)" % (filed, other))
-else:
-    print("  lessons    LESSONS.md already exists — left untouched (%d filed)" % filed)
-PYEOF
+  # counted, not capped, not sorted, not enforced. `na` says so, in the same
+  # terms it counts by.
+  CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _lessons-report
 else
   cp "$SRC/templates/LESSONS.md" "$DEST/LESSONS.md"
   echo "  lessons    LESSONS.md created"
@@ -253,52 +243,54 @@ fi
 # --- .gitignore -------------------------------------------------------------
 # The local-only block (fires.log, verified manifests, the CLAUDE.md backup)
 # is owned by `na`, which writes it fresh or brings an older one up to date.
-case "$(CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _gitignore)" in
-  written)  echo "  gitignore  local state ignored" ;;
-  upgraded) echo "  gitignore  local-only block brought up to date" ;;
-esac
+if GIOUT="$(CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _gitignore 2>&1)"; then
+  case "$GIOUT" in
+    written)  echo "  gitignore  local state ignored" ;;
+    upgraded) echo "  gitignore  local-only block brought up to date" ;;
+  esac
+else
+  echo "  gitignore  COULD NOT update .gitignore: ${GIOUT##*$'\n'}"
+  echo "             Add these lines yourself so local state is never committed:"
+  echo "               .claude/never-again/fires.log"
+  echo "               .claude/never-again/verified/"
+  echo "               CLAUDE.md.bak"
+fi
 
 # A repo that ignores .claude/ keeps the hooks on this machine. Ask git about
 # a hook that does not exist yet, which is the question that matters: will the
-# next hook the skill writes reach the repo? Hooks already force-added are a
-# different case and get a different sentence.
+# next hook the skill writes reach the repo? Git never re-includes a path under
+# an excluded directory, so the fix is to replace the .claude/ line, not add to it.
 if git -C "$DEST" check-ignore -q .claude/hooks/na/L000.sh 2>/dev/null; then
   if git -C "$DEST" ls-files --error-unmatch .claude/hooks/na >/dev/null 2>&1; then
     echo "  gitignore  .claude/ is ignored but the hooks are tracked: existing hooks are shared,"
-    echo "             new ones will be dropped by 'git add' until these lines are in .gitignore:"
+    echo "             new ones will be dropped by 'git add'. To share them, replace the"
+    echo "             .claude/ line in .gitignore with:"
   else
     echo "  gitignore  .claude/ is ignored in this repo, so the hooks, state.json and skill"
     echo "             stay on this machine and are NOT shared through git. LESSONS.md still is."
-    echo "             To share the hooks too, add these lines to .gitignore:"
+    echo "             To share the hooks too, replace the .claude/ line in .gitignore with:"
   fi
   CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _gitignore --advice | sed 's/^/               /'
 fi
 
 # --- static hosts -------------------------------------------------------------
-# A root LESSONS.md is a public URL on a host that serves the repo root.
-for host in "vercel.json:.vercelignore" "netlify.toml:_redirects"; do
-  cfg="${host%%:*}"
-  if [ -f "$DEST/$cfg" ]; then
-    case "$cfg" in
-      vercel.json)
-        if ! { [ -f "$DEST/.vercelignore" ] && grep -q "LESSONS.md" "$DEST/.vercelignore" && grep -q "^\.claude" "$DEST/.vercelignore"; }; then
-          echo "  hosting    vercel.json found: Vercel would serve /LESSONS.md publicly, and"
-          echo "             /.claude/ with it (hooks, settings.json, state.json). Add to .vercelignore:"
-          echo "               .claude"
-          echo "               LESSONS.md"
-          echo "               CLAUDE.md"
-        fi ;;
-      netlify.toml)
-        echo "  hosting    netlify.toml found: if the publish directory is the repo root,"
-        echo "             /LESSONS.md and /.claude/ are public URLs. Publish a subdirectory or block them." ;;
-    esac
-  fi
+# If the repo root is deployed as-is, /LESSONS.md and /.claude/ are URLs. The
+# host does not matter; the tell is a site at the root. Quiet when the usual
+# ignore file already excludes them.
+ROOT_SITE=""
+for tell in index.html CNAME vercel.json netlify.toml firebase.json; do
+  [ -f "$DEST/$tell" ] && ROOT_SITE="$tell" && break
 done
+if [ -n "$ROOT_SITE" ] && ! { [ -f "$DEST/.vercelignore" ] && grep -q "LESSONS.md" "$DEST/.vercelignore" && grep -q "^\.claude" "$DEST/.vercelignore"; }; then
+  echo "  hosting    $ROOT_SITE at the root: if this directory is deployed as a site, /LESSONS.md,"
+  echo "             /CLAUDE.md and /.claude/ (hooks, settings, state) become public URLs."
+  echo "             Exclude them (.vercelignore or the equivalent) or publish a subdirectory."
+fi
 
 cat <<'EOF'
 
 Done. LESSONS.md and the hooks are meant to be committed — they are team
-knowledge. Only fires.log is local.
+knowledge. Only fires.log, the verified manifests and CLAUDE.md.bak stay local.
 
 Next: fix a bug, then tell Claude "never again".
 

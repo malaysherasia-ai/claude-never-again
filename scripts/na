@@ -55,6 +55,7 @@ BASE = os.path.join(ROOT, ".claude", "never-again")
 STATE = os.path.join(BASE, "state.json")
 FIRES = os.path.join(BASE, "fires.log")
 ARCHIVE = os.path.join(BASE, "archive")
+VERIFIED = os.path.join(BASE, "verified")
 HOOKS = os.path.join(ROOT, ".claude", "hooks", "na")
 SETTINGS = os.path.join(ROOT, ".claude", "settings.json")
 
@@ -85,14 +86,43 @@ def managed(path):
     some other format must never be counted, sorted or edited."""
     if os.path.dirname(os.path.abspath(path)) == os.path.abspath(ROOT):
         return True
+    rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
+    if rel in _lesson_named_files():
+        return True
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
-            return MARKER in f.read()
+            return MARKER in f.read(4096)     # the marker sits in the header
     except OSError:
         return False
 
 
+_NAMED = None
+
+
+def _lesson_named_files():
+    """Files that lesson records say they were filed into. A package file
+    written without the marker is still ours if a lesson points at it."""
+    global _NAMED
+    if _NAMED is None:
+        _NAMED = set()
+        try:
+            for v in load().get("lessons", {}).values():
+                f = v.get("file")
+                if isinstance(f, str) and f:
+                    _NAMED.add(f.replace("\\", "/"))
+        except (OSError, ValueError):
+            pass
+    return _NAMED
+
+
+_FILES = None
+
+
 def lesson_files():
+    """Managed LESSONS.md files, walked once per run."""
+    global _FILES
+    if _FILES is not None:
+        return _FILES
     out = []
     for dirpath, dirnames, filenames in os.walk(ROOT):
         dirnames[:] = [d for d in dirnames
@@ -101,6 +131,7 @@ def lesson_files():
             p = os.path.join(dirpath, "LESSONS.md")
             if managed(p):
                 out.append(p)
+    _FILES = out
     return out
 
 
@@ -145,16 +176,23 @@ def rules(paths=None):
 #   outcome  pending | proceeded | declined | blocked
 #   grade    - | ok | wrong
 #   ref      the Claude Code tool_use_id when the payload carried one, else -
+#   tree     a fingerprint of the working tree at the fire, so a second look
+#            at the same commit (git after Claude Code) can be told from a
+#            new commit after a fix
 # Lines from before this format (ts, id, mode) still parse; their outcome is
 # unknown and shown as "-".
 # ---------------------------------------------------------------------------
 
-COLS = ("ts", "id", "mode", "source", "outcome", "grade", "ref")
+COLS = ("ts", "id", "mode", "source", "outcome", "grade", "ref", "tree")
 
 
 def parse_ts(ts):
+    """UTC timestamp to epoch seconds. mktime() minus time.timezone was wrong
+    by an hour during daylight saving, which made every fresh fire look stale
+    and settled it as declined before the after-commit hook could mark it."""
+    import calendar
     try:
-        return time.mktime(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+        return calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
     except Exception:
         return 0
 
@@ -217,6 +255,34 @@ def streak(rows, lid):
     return n
 
 
+def tree_fingerprint():
+    """What is about to be committed, cheaply: every changed or untracked
+    path with its size and mtime. Same tree, same fingerprint; a fix changes
+    it. "-" when git cannot answer."""
+    import hashlib
+    import subprocess
+    try:
+        p = subprocess.run(["git", "-C", ROOT, "status", "--porcelain=v1", "-uall"],
+                           capture_output=True, text=True)
+    except OSError:
+        return "-"
+    if p.returncode != 0:
+        return "-"
+    # Paths and their bytes, not their staging state: Claude's `git add -A &&
+    # git commit` stages between the PreToolUse fire and the git hook, and
+    # that is still the same commit.
+    h = hashlib.sha256()
+    for line in sorted(p.stdout.splitlines()):
+        path = line[3:].split(" -> ")[-1]
+        full = os.path.join(ROOT, path)
+        try:
+            st = os.stat(full)
+            h.update(("%s\t%d\t%d\n" % (path, st.st_size, st.st_mtime_ns)).encode("utf-8"))
+        except OSError:
+            h.update((path + "\tgone\n").encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
 def cmd_fired(lid, mode, source, ref):
     rows = read_log()
     settle(rows, lid=lid)
@@ -227,7 +293,8 @@ def cmd_fired(lid, mode, source, ref):
     else:
         outcome = "pending"
     rows.append({"ts": now_ts(), "id": lid, "mode": mode, "source": source,
-                 "outcome": outcome, "grade": "-", "ref": ref or "-"})
+                 "outcome": outcome, "grade": "-", "ref": ref or "-",
+                 "tree": tree_fingerprint()})
     write_log(rows)
     return 0
 
@@ -237,12 +304,20 @@ def cmd_proceeded(argv):
     ref = None
     lid = None
     only_if_pending = "--if-pending" in argv
+    same_tree = "--same-tree" in argv
     if "--tool-use-id" in argv:
         ref = argv[argv.index("--tool-use-id") + 1]
     if "--id" in argv:
         lid = argv[argv.index("--id") + 1]
     rows = read_log()
+    # A fire nobody proceeded past for a while is a decline; settle those
+    # first so an old declined fire can never be mistaken for this commit.
+    if settle(rows):
+        write_log(rows)
     pending = [r for r in rows if r["outcome"] == "pending" and (not lid or r["id"] == lid)]
+    if same_tree:
+        tree = tree_fingerprint()
+        pending = [r for r in pending if r.get("tree") == tree and tree != "-"]
     if ref:
         matched = [r for r in pending if r["ref"] == ref]
         # A payload without ids on the PreToolUse side leaves ref "-"; then
@@ -439,11 +514,10 @@ def retire(lid):
                 _drop_settings_entries(settings, entries)
                 _write_settings(settings)
                 dropped = len(entries)
-    for suffix in ("", ".next"):
-        try:
-            os.remove(os.path.join(BASE, "verified", lid + suffix))
-        except OSError:
-            pass
+    try:
+        os.remove(os.path.join(VERIFIED, lid))
+    except OSError:
+        pass
     moved = []
     if os.path.isdir(HOOKS):
         os.makedirs(ARCHIVE, exist_ok=True)
@@ -497,17 +571,40 @@ def why(lid):
 
 BLOCK_RE = re.compile(r"\n*<!-- BEGIN never-again -->.*?<!-- END never-again -->\n?", re.S)
 # The local-only block in .gitignore. One list; install writes or upgrades
-# the block from it, uninstall removes by the same shape. Older releases also
-# wrote `.claude/never-again/.last-boot`, which the pattern still recognises.
+# the block from it, uninstall removes by the same shape. `.last-boot` stays
+# for hooks copied from the 0.2 browser-boot example, which still write it.
 GITIGNORE_HEADER = "# never-again (local only)"
 GITIGNORE_LINES = (".claude/never-again/fires.log",
                    ".claude/never-again/verified/",
+                   ".claude/never-again/.last-boot",
                    "CLAUDE.md.bak")
 GITIGNORE_RE = re.compile(
     r"\n*" + re.escape(GITIGNORE_HEADER) + r"\n"
     r"(?:(?:\.claude/never-again/[^\n]*|CLAUDE\.md\.bak)\n)*", re.S)
-GITIGNORE_UNIGNORE = ("!.claude/hooks/na/", "!.claude/never-again/",
-                      "!.claude/skills/never-again/") + GITIGNORE_LINES[:2]
+# Git never re-includes a path whose parent directory is excluded, so sharing
+# the hooks from a repo that ignores .claude/ means replacing that line with
+# a chain that re-includes each parent and excludes its other contents.
+GITIGNORE_UNIGNORE = (
+    "!.claude/", ".claude/*",
+    "!.claude/hooks/", ".claude/hooks/*", "!.claude/hooks/na/",
+    "!.claude/never-again/",
+    "!.claude/skills/", ".claude/skills/*", "!.claude/skills/never-again/",
+) + GITIGNORE_LINES[:3]
+
+
+def _read_text(path):
+    """(text with \n endings, original newline, encoding errors handler).
+    Bytes that are not UTF-8 survive a round trip untouched."""
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    nl = "\r\n" if b"\r\n" in raw else "\n"
+    text = raw.decode("utf-8", "surrogateescape").replace("\r\n", "\n")
+    return text, nl
+
+
+def _write_text(path, text, nl):
+    with open(path, "wb") as fh:
+        fh.write(text.replace("\n", nl).encode("utf-8", "surrogateescape"))
 
 
 def cmd_gitignore(argv):
@@ -518,7 +615,7 @@ def cmd_gitignore(argv):
             print(ln)
         return 0
     gi = os.path.join(ROOT, ".gitignore")
-    text = open(gi, encoding="utf-8").read() if os.path.isfile(gi) else ""
+    text, nl = _read_text(gi) if os.path.isfile(gi) else ("", "\n")
     block = GITIGNORE_HEADER + "\n" + "\n".join(GITIGNORE_LINES) + "\n"
     m = GITIGNORE_RE.search(text)
     if m and m.group(0).lstrip("\n") == block:
@@ -529,9 +626,34 @@ def cmd_gitignore(argv):
         text = GITIGNORE_RE.sub("\n", text)
     text = text.rstrip("\n")
     text = (text + "\n\n" if text else "") + block
-    with open(gi, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(text)
+    _write_text(gi, text, nl)
     print(verb)
+    return 0
+
+
+def cmd_lessons_report():
+    """What an existing root LESSONS.md holds, in the installer's voice. Uses
+    the same rule pattern and marker as everything else here."""
+    path = os.path.join(ROOT, "LESSONS.md")
+    if not os.path.isfile(path):
+        return 0
+    lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
+    marker = next((i for i, ln in enumerate(lines) if MARKER in ln), None)
+    if marker is not None:
+        lines = lines[marker + 1:]
+    filed = sum(1 for ln in lines if RULE_RE.match(ln))
+    other = sum(1 for ln in lines if ln.strip() and not ln.lstrip().startswith(("#", "<!--"))
+                and not RULE_RE.match(ln) and ln.strip() != "---")
+    if other and not filed:
+        print("  lessons    LESSONS.md already exists \u2014 left untouched")
+        print("             It holds %d line(s) of notes in your own words. Claude will read them," % other)
+        print("             but never-again cannot count, cap, sort or enforce them. To bring them")
+        print("             in, tell Claude once:")
+        print('               "read LESSONS.md and refile each note through the never-again skill"')
+    elif other:
+        print("  lessons    LESSONS.md already exists \u2014 left untouched (%d filed, %d note(s) in your own words)" % (filed, other))
+    else:
+        print("  lessons    LESSONS.md already exists \u2014 left untouched (%d filed)" % filed)
     return 0
 
 
@@ -632,9 +754,9 @@ def uninstall(argv):
                           "remove %d hook entr%s, keep everything else"
                           % (len(hook_entries), "y" if len(hook_entries) == 1 else "ies")))
 
-    gi_text = None
+    gi_text, gi_nl = None, "\n"
     if os.path.isfile(gitignore):
-        gi_text = open(gitignore, encoding="utf-8").read()
+        gi_text, gi_nl = _read_text(gitignore)
         if GITIGNORE_RE.search(gi_text):
             edits.append((".gitignore", "remove the never-again section"))
 
@@ -694,8 +816,7 @@ def uninstall(argv):
 
     if gi_text is not None and GITIGNORE_RE.search(gi_text):
         new = GITIGNORE_RE.sub("\n", gi_text).lstrip("\n")
-        with open(gitignore, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(new)
+        _write_text(gitignore, new, gi_nl)
         print("  edited   .gitignore")
 
     # --- then the directories. BASE holds this script, so it goes last. -----
@@ -750,6 +871,8 @@ def main():
         return cmd_proceeded(args[1:])
     if cmd == "_gitignore":
         return cmd_gitignore(args[1:])
+    if cmd == "_lessons-report":
+        return cmd_lessons_report()
     if len(args) < 2:
         sys.exit(f"usage: na {cmd} L###")
     lid = args[1].upper()

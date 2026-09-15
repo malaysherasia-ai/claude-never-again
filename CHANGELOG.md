@@ -2,6 +2,60 @@
 
 All notable changes to never-again are recorded here.
 
+## [Unreleased]
+
+From a review of everything since 0.2.0, seven angles, before anything else
+is built on it.
+
+### Fixed
+
+- **The un-ignore advice could not work.** Git never re-includes a path under
+  an excluded directory, so `!.claude/hooks/na/` after `.claude/` did nothing.
+  The installer now says to replace the `.claude/` line and prints a chain
+  that re-includes each parent and excludes its other contents. The test
+  applies the advice and asks git.
+- **A declined warning could let an unverified commit through.** Under git,
+  the verify engine skipped its command whenever any fire for the lesson was
+  still pending, including one the person had declined an hour earlier, and
+  marked it "proceeded". Fires now carry a fingerprint of the tree they were
+  raised on; the skip applies only to the same tree, and pending fires are
+  settled before the match.
+- **A same-length edit with a preserved mtime passed as fresh.** Files
+  modified within two seconds of the manifest are always re-read, the way
+  git treats a racily-clean index.
+- **Changing the command did not re-run it.** The manifest records a digest
+  of `verify.run`; a changed rule counts as never verified. Files the command
+  itself names are always watched.
+- **A file deleted but not yet `git rm`ed kept the tree stale forever.**
+  Files absent from disk are no longer reported unreadable.
+- **A Python traceback in the helper read as "stale".** Internal errors exit
+  with their own code and message.
+- **Git-mode notices no longer block.** A misconfigured hook or a pass that
+  could not be recorded prints and lets the commit through, as warn mode
+  promises; Claude Code gets a systemMessage; `--run` exits 1.
+- **`.gitignore` is round-tripped byte for byte.** Non-UTF-8 bytes and CRLF
+  endings survive; a failure to update it is reported instead of swallowed,
+  and `na uninstall` reads it the same way.
+- **The git stub says when its runner is missing** instead of passing every
+  commit in silence, and the installer upgrades a stub only when it is
+  exactly one it wrote, so lines a person added survive.
+- **A hook copied from the 0.2 example still writes `.last-boot`**, so that
+  line stays in the local-only block.
+
+### Changed
+
+- **A lesson records its file.** `state.json` entries carry `"file"`, and
+  `na` manages a package `LESSONS.md` because a lesson names it, not only
+  because it carries the marker. The marker check reads the header only, and
+  the tree is walked once per run.
+- **The static-host warning is host-neutral**: a site at the root
+  (`index.html`, `CNAME`, or a Vercel, Netlify or Firebase config) triggers
+  one message.
+- Under the git runner the interpreter is resolved once, not once per hook;
+  `check` prints the mode so a retired hook never runs its command; the
+  `.next` sidecar is gone; the existing-`LESSONS.md` report and the stub body
+  each live in one place.
+
 ## [0.3.0] — 2026-09-15
 
 The hook format changed: verify-shaped hooks are five-line stubs over a shared
@@ -49,7 +103,7 @@ existing large `CLAUDE.md`, a gitignored `.claude/` used by other tooling, a
 - **`CLAUDE.md.bak` was left for `git add -A` to commit.** It is in the
   local-only block of `.gitignore` now; an older install gets the line added.
 
-### Added
+### Added, earlier in the cycle
 
 - **The installer reports three repo conditions** it cannot fix for you: a
   gitignored `.claude/` (hooks stay local; it prints the un-ignore lines), a

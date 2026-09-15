@@ -235,53 +235,89 @@ json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
 PY
 V=".claude/hooks/na/L002.sh"; VM=".claude/never-again/verified/L002"
 firev() { HOOK="$V" NA_DRY_RUN=1 fire "git commit -m x"; }
-runs() { [ -f runs.log ] && grep -c . runs.log || echo 0; }
-check "never verified: runs the check, passes, silent" '[ -z "$(firev)" ] && [ -f "$VM" ] && [ "$(runs)" -eq 1 ]'
-check "string config is one item, not characters" 'grep -q "a.txt" "$VM" && ! grep -q "check.sh" "$VM"'
+firelive() { HOOK="$V" fire "git commit -m x" "${1:-}"; }
+runs() { if [ -f runs.log ]; then grep -c . runs.log || true; else echo 0; fi; }
+setcfg() { "$PYBIN" -c "
+import json, io, sys
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8'))
+if sys.argv[1] == 'del': st['lessons']['L002'].pop('verify', None)
+else: st['lessons']['L002']['verify'] = json.loads(sys.argv[1])
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)" "$1"; }
+check "dry run: runs the check, records nothing" '[ -z "$(firev)" ] && [ ! -f "$VM" ] && [ "$(runs)" -eq 1 ]'
+: > runs.log
+check "never verified: runs the check, passes, silent" '[ -z "$(firelive)" ] && [ -f "$VM" ] && [ "$(runs)" -eq 1 ]'
+check "string config is one item, not characters" 'grep -q "a.txt" "$VM"'
+check "the command's own script is watched"    'grep -q "check.sh" "$VM"'
 check "gitignored files are never watched"    '! grep -q "vendor/ignored.txt" "$VM"'
 check "skip is a root prefix, nested kept"    '! grep -q "scripts/top.txt" "$VM" && grep -q "nested/scripts/deep.txt" "$VM"'
-check "unchanged: fast path, no run"          '[ -z "$(firev)" ] && [ "$(runs)" -eq 1 ]'
-touch -m a.txt
-check "touched but identical: still no run"   '[ -z "$(firev)" ] && [ "$(runs)" -eq 1 ]'
+check "unchanged: fast path, no run"          '[ -z "$(firelive)" ] && [ "$(runs)" -eq 1 ]'
+sleep 2.2; touch -m a.txt
+check "touched but identical: still no run"   '[ -z "$(firelive)" ] && [ "$(runs)" -eq 1 ]'
+"$PYBIN" - <<'PY'
+import os, time
+st = os.stat('a.txt'); time.sleep(2.2)
+open('a.txt', 'w').write('bass\n')                       # same length as "base\n"
+os.utime('a.txt', ns=(st.st_atime_ns, st.st_mtime_ns))    # mtime restored
+PY
+check "same-length edit, mtime restored: caught" '[ -z "$(firelive)" ] && [ "$(runs)" -eq 2 ] && grep -q "bass" a.txt'
+setcfg '{"run": "sh check.sh # v2", "watch": ".txt", "skip": "scripts"}'
+check "changed command: runs again"           '[ -z "$(firelive)" ] && [ "$(runs)" -eq 3 ]'
+rm a.txt
+check "deleted on disk: runs once"            '[ -z "$(firelive)" ] && [ "$(runs)" -eq 4 ]'
+check "deleted but still in the index: no rerun" '[ -z "$(firelive)" ] && [ "$(runs)" -eq 4 ]'
+echo base > a.txt
 echo BROKEN > g.txt
 OUT="$(firev)"
 check "changed and failing: asks"             'echo "$OUT" | grep -q "\"ask\""'
-check "names the command that failed"         'echo "$OUT" | grep -q "sh check.sh failed"'
+check "names the command that failed"         'echo "$OUT" | grep -q "sh check.sh # v2 failed"'
 echo fine > g.txt
-check "fixed: runs again, passes, silent"     '[ -z "$(firev)" ] && grep -q "g.txt" "$VM" && [ ! -f "$VM.next" ]'
+check "fixed: runs again, passes, silent"     '[ -z "$(firelive)" ] && grep -q "g.txt" "$VM"'
 check "manifest dir is gitignored"            'git check-ignore -q "$VM"'
 echo BROKEN > g.txt
 bash "$V" --run >/dev/null 2>&1; RC=$?
 check "--run reports a failure"               '[ $RC -ne 0 ]'
 echo fine > g.txt
 check "--run records a pass"                  'bash "$V" --run 2>&1 | grep -q "recorded"'
-echo BROKEN > g.txt; : > runs.log
-printf '{"tool_input":{"command":"git commit -m x"},"tool_use_id":"tv"}' | bash "$V" >/dev/null   # a real fire, left pending
+echo "--- git after Claude asked on the same tree: no second run"
+echo BROKEN > g.txt; : > runs.log; : > "$LOG"
+firelive tv >/dev/null                          # a real fire, left pending, tree T1
 git add g.txt
 ERR="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"
-check "git after Claude asked: quiet, no second run" '[ -z "$ERR" ] && [ "$(runs)" -eq 1 ]'
-git reset -q g.txt; echo fine > g.txt; : > "$LOG"
-"$PYBIN" - <<'PY'
-import json, io
-p = '.claude/never-again/state.json'
-st = json.load(io.open(p, encoding='utf-8')); st['lessons']['L002']['verify'] = {"run": "", "watch": ".txt"}
-json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
-PY
+check "same tree: quiet, no second run"       '[ -z "$ERR" ] && [ "$(runs)" -eq 1 ]'
+check "recorded as proceeded"                 '[ "$(col 5)" = proceeded ]'
+echo "--- git after a decline and a fix: verified"
+git reset -q g.txt; echo BROKEN > g.txt; : > runs.log; : > "$LOG"
+firelive tw >/dev/null                          # pending on the broken tree
+echo fine > g.txt                               # the person fixes it instead
+git add g.txt
+ERR="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"
+check "different tree: the check runs"        '[ -z "$ERR" ] && [ "$(runs)" -eq 1 ]'
+check "the declined fire stays a decline"     '[ "$(col 5)" != proceeded ]'
+git reset -q g.txt; : > "$LOG"
+echo "--- a dead hook says so, and never blocks git"
+setcfg '{"run": "", "watch": ".txt"}'
 check "misconfigured: visible systemMessage"  'firev | grep -q "systemMessage.*verify.run"'
+ERR="$(NA_EVENT=git bash "$V" 2>&1 >/dev/null </dev/null)"; RC=$?
+check "misconfigured under git: stderr, exit 0" '[ $RC -eq 0 ] && echo "$ERR" | grep -q "verify.run"'
+setcfg del
+check "unconfigured: visible systemMessage"   'firev | grep -q "systemMessage.*no verify block"'
+setcfg '{"run": "sh check.sh", "watch": ".txt", "skip": "scripts"}'
 "$PYBIN" - <<'PY'
 import json, io
 p = '.claude/never-again/state.json'
-st = json.load(io.open(p, encoding='utf-8')); del st['lessons']['L002']['verify']
+st = json.load(io.open(p, encoding='utf-8')); st['lessons']['L002']['mode'] = 'retired'
 json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
 PY
-check "unconfigured: visible systemMessage"   'firev | grep -q "systemMessage.*no verify block"'
+echo BROKEN > g.txt; : > runs.log
+check "retired: silent and the command never runs" '[ -z "$(firev)" ] && [ "$(runs)" -eq 0 ]'
+echo fine > g.txt
 "$PYBIN" $NA retire L002 >/dev/null 2>&1
 check "retire removes the manifest"           '[ ! -f "$VM" ] && [ ! -f "$V" ]'
 rm -f g.txt check.sh runs.log; rm -rf vendor nested scripts
 "$PYBIN" - <<'PY'
-import io, re
-p = '.gitignore'; s = io.open(p, encoding='utf-8').read()
-s = s.replace('runs.log\nvendor/\n', '')
+import io
+p = '.gitignore'; s = io.open(p, encoding='utf-8').read().replace('runs.log\nvendor/\n', '')
 io.open(p, 'w', encoding='utf-8', newline='\n').write(s)
 PY
 git add -A >/dev/null 2>&1; git commit -qm "teardown" >/dev/null 2>&1
@@ -295,14 +331,23 @@ echo "=== an old stub is upgraded on re-run ==="
 printf '#!/bin/sh\n# never-again pre-commit stub (managed by install.sh; uninstall removes it)\nexec "$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit" "$@"\n' > .git/hooks/pre-commit
 OUT10="$(bash "$SRC/install.sh" . 2>&1)"
 check "install says it upgraded the stub"  'echo "$OUT10" | grep -q "stub upgraded"'
-check "stub now guards a missing runner"   'grep -q "exit 0" .git/hooks/pre-commit'
+check "stub now guards a missing runner"   'grep -q "is missing" .git/hooks/pre-commit'
+printf '\nnpm run lint\n' >> .git/hooks/pre-commit
+OUT10b="$(bash "$SRC/install.sh" . 2>&1)"
+check "a stub edited by hand is left alone" 'echo "$OUT10b" | grep -q "edited by hand" && grep -q "npm run lint" .git/hooks/pre-commit'
+"$PYBIN" - <<'PY'
+import io
+p = '.git/hooks/pre-commit'; s = io.open(p, encoding='utf-8').read().replace('\nnpm run lint\n', '')
+io.open(p, 'w', encoding='utf-8', newline='\n').write(s)
+PY
 
 echo
 echo "=== a hand-deleted .claude/ does not break commits ==="
 mv .claude .claude.off
 echo x > e.txt; git add e.txt
-git commit -qm x 2>/dev/null; RC=$?
+ERR="$(git commit -qm x 2>&1)"; RC=$?
 check "stub exits 0 without its runner"    '[ $RC -eq 0 ]'
+check "and says the runner is missing"     'echo "$ERR" | grep -q "pre-commit is missing"'
 mv .claude.off .claude
 
 echo
@@ -313,9 +358,24 @@ check "hooks tracked: says new ones get dropped" 'echo "$OUT7" | grep -q "new on
 git rm -r -q --cached .claude >/dev/null 2>&1
 OUT7="$(bash "$SRC/install.sh" . 2>&1)"
 check "hooks untracked: warns they stay local" 'echo "$OUT7" | grep -q "NOT shared through git"'
-check "and prints the un-ignore lines"     'echo "$OUT7" | grep -q "!.claude/hooks/na/"'
-check "advice includes verified/"          'echo "$OUT7" | grep -q "never-again/verified/"'
+check "says to replace the .claude/ line"  'echo "$OUT7" | grep -q "replace the .claude/ line"'
 check "local-only block still written"     'grep -q "CLAUDE.md.bak" .gitignore'
+"$PYBIN" - <<'PY'
+import io, subprocess
+p = '.gitignore'; s = io.open(p, encoding='utf-8').read()
+advice = subprocess.run(['python', '.claude/never-again/na', '_gitignore', '--advice'],
+                        capture_output=True, text=True).stdout
+io.open(p, 'w', encoding='utf-8', newline='\n').write(s.replace('.claude/\n', advice))
+PY
+check "applying the advice really un-ignores the hooks" '! git check-ignore -q .claude/hooks/na/L000.sh'
+check "and keeps the local files ignored"  'git check-ignore -q .claude/never-again/fires.log'
+"$PYBIN" - <<'PY'
+import io, subprocess
+p = '.gitignore'; s = io.open(p, encoding='utf-8').read()
+advice = subprocess.run(['python', '.claude/never-again/na', '_gitignore', '--advice'],
+                        capture_output=True, text=True).stdout
+io.open(p, 'w', encoding='utf-8', newline='\n').write(s.replace(advice, '.claude/\n'))
+PY
 "$PYBIN" - <<'PY'
 import io
 p = '.gitignore'; s = io.open(p, encoding='utf-8').read().replace('.claude/\n', '')
@@ -326,10 +386,10 @@ git add .claude >/dev/null 2>&1
 echo
 echo "=== an old gitignore block is upgraded wholesale ==="
 "$PYBIN" - <<'PY'
-import io, re
+import io
 p = '.gitignore'; s = io.open(p, encoding='utf-8').read()
-s = re.sub(r"\n*# never-again \(local only\)\n(?:(?:\.claude/never-again/[^\n]*|CLAUDE\.md\.bak)\n)*", "\n", s)
-s = s.rstrip("\n") + "\n\n# never-again (local only)\n.claude/never-again/fires.log\nCLAUDE.md.bak\n"
+s = s[:s.index("# never-again (local only)")].rstrip("\n")
+s += "\n\n# never-again (local only)\n.claude/never-again/fires.log\nCLAUDE.md.bak\n"
 io.open(p, 'w', encoding='utf-8', newline='\n').write(s)
 PY
 OUT11="$(bash "$SRC/install.sh" . 2>&1)"
@@ -337,12 +397,30 @@ check "install says it upgraded the block"  'echo "$OUT11" | grep -q "brought up
 check "verified/ now ignored"               'grep -q "never-again/verified/" .gitignore'
 check "block appears once"                  '[ "$(grep -c "never-again (local only)" .gitignore)" -eq 1 ]'
 check "second run is quiet"                 '! bash "$SRC/install.sh" . 2>&1 | grep -q "brought up to date"'
+echo "--- bytes and line endings survive"
+"$PYBIN" - <<'PY'
+import io
+p = '.gitignore'; raw = io.open(p, 'rb').read()
+raw = raw[:raw.index(b"# never-again (local only)")].rstrip(b"\n").replace(b"\n", b"\r\n")
+raw = b"# caf\xe9 (cp1252 comment)\r\n" + raw + b"\r\n\r\n# never-again (local only)\r\n.claude/never-again/fires.log\r\n"
+io.open(p, 'wb').write(raw)
+PY
+OUT12="$(bash "$SRC/install.sh" . 2>&1)"
+check "non-UTF-8 gitignore: upgraded, not crashed" 'echo "$OUT12" | grep -q "brought up to date"'
+check "the cp1252 byte survived"            '"$PYBIN" -c "import io,sys; sys.exit(0 if b\"caf\\xe9\" in io.open(\".gitignore\",\"rb\").read() else 1)"'
+check "CRLF endings kept"                   '"$PYBIN" -c "import io,sys; r=io.open(\".gitignore\",\"rb\").read(); sys.exit(0 if b\"\\r\\n\" in r and b\"\\n\" not in r.replace(b\"\\r\\n\", b\"\") else 1)"'
+"$PYBIN" - <<'PY'
+import io
+p = '.gitignore'; raw = io.open(p, 'rb').read().replace(b"\r\n", b"\n")
+raw = raw.replace(b"# caf\xe9 (cp1252 comment)\n", b"")
+io.open(p, 'wb').write(raw)
+PY
 
 echo
 echo "=== a static host is told ==="
 echo '{}' > vercel.json
 OUT8="$(bash "$SRC/install.sh" . 2>&1)"
-check "vercel: warns about /LESSONS.md"    'echo "$OUT8" | grep -q "serve /LESSONS.md publicly"'
+check "vercel: warns about /LESSONS.md"    'echo "$OUT8" | grep -q "/LESSONS.md" && echo "$OUT8" | grep -q "public URLs"'
 printf '.claude\nLESSONS.md\nCLAUDE.md\n' > .vercelignore
 OUT9="$(bash "$SRC/install.sh" . 2>&1)"
 check "vercel: quiet once ignored"         '! echo "$OUT9" | grep -q "serve /LESSONS.md"'
