@@ -145,8 +145,10 @@ def lesson_files():
 def loaded_files(cwd=None):
     """The LESSONS.md files Claude actually sees from a working directory:
     the root file plus the nearest one at or above cwd inside the repo."""
-    cwd = os.path.normcase(os.path.abspath(cwd or os.getcwd()))
-    root = os.path.normcase(os.path.abspath(ROOT))
+    # realpath on both: on macOS /tmp is a symlink to /private/tmp, and the
+    # working directory comes back resolved while ROOT does not.
+    cwd = os.path.normcase(os.path.realpath(cwd or os.getcwd()))
+    root = os.path.normcase(os.path.realpath(ROOT))
     root_file = os.path.join(ROOT, "LESSONS.md")
     out = [root_file] if os.path.exists(root_file) else []
     d = cwd

@@ -40,6 +40,9 @@ sedi(){ local e="$1"; shift; local f; for f in "$@"; do sed -i.bak "$e" "$f" && 
 case "$T" in "$SRC"|"$SRC"/*) echo "refusing to run inside $SRC"; exit 1 ;; esac
 rm -rf "$T" && mkdir -p "$T" && cd "$T" || { echo "cannot create $T"; exit 1; }
 [ "$(pwd -P)" != "$(cd "$SRC" && pwd -P)" ] || { echo "refusing to run inside $SRC"; exit 1; }
+# The project root as Python sees it: a native path on Windows (Git Bash's
+# /tmp means nothing to a Windows Python), the real path elsewhere.
+T="$(pwd -W 2>/dev/null || pwd -P)"
 git init -q .
 git config user.email test@example.com
 git config user.name test
