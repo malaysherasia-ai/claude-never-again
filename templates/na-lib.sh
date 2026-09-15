@@ -17,6 +17,11 @@
 #   NA_EVENT      "git" when run from the git pre-commit runner
 #   NA_DRY_RUN=1  decide, but write nothing to fires.log (for self-tests)
 
+# Every Python this library spawns prints through a pipe. On Windows that
+# pipe is cp1252 by default, and a commit message with an emoji in it made the
+# command extractor crash, so the hook saw an empty command and went blind.
+export PYTHONIOENCODING=utf-8 PYTHONUTF8=1
+
 # Resolve a Python that actually runs. On Windows `command -v python3` finds
 # the Microsoft Store stub, which exists, is on PATH, and exits 49 having run
 # nothing. Existence is never the test; running a statement is.
@@ -99,10 +104,27 @@ print("NA_TOOL_USE_ID=%s" % shlex.quote(str(d.get("tool_use_id", ""))))
 
 # na_is_commit CMD — true when CMD contains a git commit as a command segment.
 # Accepts global options between git and commit (-C dir, -c k=v, --no-pager),
-# extra whitespace, and chaining (&&, ;, |). Rejects an echo of the words.
+# extra whitespace, and chaining (&&, ;, |). Text inside quotes is ignored:
+# an echo of a payload that mentions "git commit" is not a commit. A commit
+# genuinely hidden inside quotes (sh -c "git commit") still meets the git
+# pre-commit runner, which sees every real commit.
 na_is_commit() {
-  local re='(^|[;&|(]|then |do |exec |sudo )[[:space:]]*git([[:space:]]+(-[cC][[:space:]]+[^[:space:]]+|--?[A-Za-z-]+(=[^[:space:]]+)?))*[[:space:]]+commit([[:space:]]|$)'
-  [[ "$1" =~ $re ]]
+  local cmd="$1" re
+  cmd="$(printf '%s' "$cmd" | sed -e 's/\\["'"'"']//g' -e "s/'[^']*'/''/g" -e 's/"[^"]*"/""/g')"
+  re='(^|[;&|(]|then |do |exec |sudo )[[:space:]]*git([[:space:]]+(-[cC][[:space:]]+[^[:space:]]+|--?[A-Za-z-]+(=[^[:space:]]+)?))*[[:space:]]+commit([[:space:]]|$)'
+  [[ "$cmd" =~ $re ]]
+}
+
+# na_is_chain CMD — true when CMD runs more than one command (&&, ||, ;, |).
+# PreToolUse sees the repository before any of them run, so a check about
+# repository state (the current branch, what is staged) can be wrong for a
+# chain such as `git checkout -b fix && git commit`. Such a check should
+# return 0 under Claude Code for a chain and let the git runner, which sees
+# the state at commit time, decide.
+na_is_chain() {
+  local cmd
+  cmd="$(printf '%s' "$1" | sed -e 's/\\["'"'"']//g' -e "s/'[^']*'/''/g" -e 's/"[^"]*"/""/g')"
+  [[ "$cmd" =~ (\&\&|\|\||;|\|) ]]
 }
 
 # na_changed_files [ext ...] — the files a commit could carry, one per line.
