@@ -80,8 +80,9 @@ cp "$SRC/templates/na-lib.sh"       "$DEST/.claude/hooks/na/na-lib.sh"
 cp "$SRC/templates/na-verify.sh"    "$DEST/.claude/hooks/na/na-verify.sh"
 cp "$SRC/templates/after-commit.sh" "$DEST/.claude/hooks/na/_after.sh"
 cp "$SRC/templates/pre-commit"      "$DEST/.claude/hooks/na/pre-commit"
-chmod +x "$DEST/.claude/hooks/na/_after.sh" "$DEST/.claude/hooks/na/pre-commit"
-echo "  hooks      .claude/hooks/na/na-lib.sh, na-verify.sh, na-manifest.py, _after.sh, pre-commit"
+cp "$SRC/templates/dispatch"        "$DEST/.claude/hooks/na/dispatch"
+chmod +x "$DEST/.claude/hooks/na/_after.sh" "$DEST/.claude/hooks/na/pre-commit" "$DEST/.claude/hooks/na/dispatch"
+echo "  hooks      .claude/hooks/na/dispatch, na-lib.sh, na-verify.sh, na-manifest.py, _after.sh, pre-commit"
 
 # --- git pre-commit -----------------------------------------------------------
 # A stub in git's hooks directory hands every commit to the runner, so a hook
@@ -170,10 +171,10 @@ JSON
 fi
 
 # --- settings.json ---------------------------------------------------------
-# Merged, never replaced. `na _register` adds the after-commit resolver and a
-# PreToolUse entry for every commit-time hook lesson in state.json that is
-# not registered yet. That is what a fresh clone needs, so settings.json
-# itself never has to travel through git.
+# Merged, never replaced. `na _register` adds the after-commit resolver and
+# the one dispatcher entry, and drops per-hook entries from earlier releases.
+# That is what a fresh clone needs, so settings.json never has to travel
+# through git, and filing a hook never touches settings at all.
 CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _register || true
 
 # --- CLAUDE.md --------------------------------------------------------------

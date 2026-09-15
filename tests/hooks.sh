@@ -55,6 +55,7 @@ HOOK=".claude/hooks/na/L001.sh"
 # with a JSON payload, the way Claude Code runs it.
 fire() { printf '{"tool_input":{"command":%s}%s}' "$("$PYBIN" -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1")" "${2:+,\"tool_use_id\":\"$2\"}" | bash "$HOOK"; }
 after() { printf '{"tool_use_id":"%s"}' "${1:-}" | bash .claude/hooks/na/_after.sh; }
+dispatch() { printf '{"tool_input":{"command":%s}%s}' "$("$PYBIN" -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1")" "${2:+,\"tool_use_id\":\"$2\"}" | bash .claude/hooks/na/dispatch; }
 logn() { [ -f "$LOG" ] && grep -c . "$LOG" || echo 0; }
 col() { awk -F'\t' -v n="$1" 'END{print $n}' "$LOG"; }    # last line, column n
 
@@ -65,6 +66,8 @@ check "resolver installed"         '[ -x .claude/hooks/na/_after.sh ]'
 check "git runner installed"       '[ -x .claude/hooks/na/pre-commit ]'
 check "git stub installed"         'grep -q never-again .git/hooks/pre-commit'
 check "resolver registered"        'grep -q _after.sh .claude/settings.json'
+check "dispatcher registered"      'grep -q "/na/dispatch" .claude/settings.json'
+check "dispatcher installed"       '[ -x .claude/hooks/na/dispatch ]'
 
 cp .claude/never-again/hook-template.sh "$HOOK"
 "$PYBIN" - "$HOOK" <<'PY'
@@ -102,13 +105,58 @@ for g in d['hooks']['PreToolUse']:
     g['hooks'] = [h for h in g['hooks'] if '/na/L001.sh' not in h['command']]
 json.dump(d, io.open(p, 'w', encoding='utf-8'), indent=2)
 PY
-check "L001 unregistered for the test"    '! grep -q "L001.sh" .claude/settings.json'
+check "L001 per-hook entry removed for the test" '! grep -q "L001.sh" .claude/settings.json'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/settings.json'
+d = json.load(io.open(p, encoding='utf-8'))
+d['hooks']['PreToolUse'].append({"matcher": "Bash", "hooks": [
+    {"type": "command", "if": "Bash(git commit *)", "command": '"$CLAUDE_PROJECT_DIR"/.claude/hooks/na/L001.sh'}]})
+json.dump(d, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
 OUTR="$(bash "$SRC/install.sh" . 2>&1)"
-check "installer registers it from state"  'echo "$OUTR" | grep -q "registered L001" && grep -q "L001.sh" .claude/settings.json'
-check "registered once, not twice"         '[ "$(grep -c "L001.sh" .claude/settings.json)" -eq 1 ]'
+check "installer drops a per-hook entry"   'echo "$OUTR" | grep -q "dropped 1 per-hook" && ! grep -q "L001.sh" .claude/settings.json'
+check "dispatcher entry registered once"   '[ "$(grep -c "/na/dispatch" .claude/settings.json)" -eq 1 ]'
 OUTR2="$(bash "$SRC/install.sh" . 2>&1)"
 check "second run reports nothing to do"   'echo "$OUTR2" | grep -q "already registered"'
 echo "$OUTR2" | grep -q "already registered" || echo "$OUTR2" | sed 's/^/      | /' | head -30
+
+echo
+echo "=== the dispatcher runs the index, not the settings ==="
+check "index lists L001 in warn"          '"$PYBIN" $NA _index | grep -q "^L001	warn	commit	-$"'
+check "na index is readable"              '"$PYBIN" $NA index | grep -q "L001   warn   commit"'
+echo TODO-BLOCK > d0.txt
+OUTD="$(NA_DRY_RUN=1 dispatch "git commit -m x")"
+check "dispatch asks through the index"   'echo "$OUTD" | grep -q "\"ask\"" && echo "$OUTD" | grep -q "d0.txt"'
+check "dispatch: not a commit, silent"    '[ -z "$(NA_DRY_RUN=1 dispatch "ls")" ]'
+sed -i 's/^WATCH=""/WATCH=".css"/' "$HOOK"
+check "WATCH: no .css changed, hook skipped" '[ -z "$(NA_DRY_RUN=1 dispatch "git commit -m x")" ]'
+echo x > e.css
+check "WATCH: a .css changed, hook runs"  'NA_DRY_RUN=1 dispatch "git commit -m x" | grep -q "\"ask\""'
+rm -f e.css d0.txt; sed -i 's/^WATCH=".css"/WATCH=""/' "$HOOK"
+cp "$HOOK" .claude/hooks/na/L009.sh; sed -i 's/^ID="L001"/ID="L009"/; s/^RULE=.*/RULE="second opinion"/' .claude/hooks/na/L009.sh
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8'))
+st['lessons']['L009'] = {"form": "hook", "mode": "block", "hook": ".claude/hooks/na/L009.sh"}
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+echo TODO-BLOCK > d1.txt
+OUTD="$(NA_DRY_RUN=1 dispatch "git commit -m x")"
+check "two hooks, one decision: deny wins" 'echo "$OUTD" | grep -q "\"deny\"" && [ "$(echo "$OUTD" | grep -c .)" -eq 1 ]'
+check "both reasons joined"               'echo "$OUTD" | grep -q "second opinion" && echo "$OUTD" | grep -q "TODO-BLOCK"'
+git add d1.txt
+ERR="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"; RCD=$?
+check "git runner goes through the dispatcher" '[ $RCD -ne 0 ] && echo "$ERR" | grep -q "L009 blocked"'
+git reset -q d1.txt; rm -f d1.txt .claude/hooks/na/L009.sh
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); del st['lessons']['L009']
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+: > "$LOG"
 
 echo
 echo "=== decides from the command, not the substring ==="

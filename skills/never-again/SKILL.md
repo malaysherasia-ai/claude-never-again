@@ -101,14 +101,9 @@ tool. Warn mode is also how the lesson proves itself.
      `bash .claude/hooks/na/L017.sh --run`. The worked example is
      `examples/browser-boot` in the tool repo.
 
-     **Its settings entry needs a `"timeout"`, in seconds, longer than the
-     command takes.** Claude Code's default kills a slow hook, and a killed
-     hook records nothing and looks installed:
-
-     ```json
-     { "type": "command", "if": "Bash(git commit *)", "timeout": 180,
-       "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/L017.sh" }
-     ```
+     The dispatcher's entry carries a 600 second timeout, which covers a
+     slow suite. If a check takes longer than that, it needs its own entry
+     with a bigger `"timeout"`, or it belongs in CI rather than a hook.
    - **Self-test with `NA_DRY_RUN=1`, feeding the payload from a file.**
      Write the fake payload to a file and run `bash L017.sh < payload.json`,
      so the words "git commit" never appear in your own Bash command: the
@@ -120,32 +115,15 @@ tool. Warn mode is also how the lesson proves itself.
      under `NA_DRY_RUN`, because nothing else can decide, but records nothing;
      self-test it with a fast command first, then set the real one.
 
-3. Register it. Read `.claude/settings.json`, merge this into the existing
-   `hooks` object, write it back. **Never replace the file.** Use the `if`
-   field so the process only spawns for the commands that matter:
+3. Nothing to register. One dispatcher entry in `.claude/settings.json`
+   (installed once) runs every hook listed in `state.json`, so filing a hook
+   never touches settings. Set `TRIGGER` and, when the check only concerns
+   some file types, `WATCH=".css .html"` in the script: the dispatcher skips
+   the hook when no such file changed, which is what keeps a repo with many
+   hooks fast. `na index` shows what the dispatcher will run. A hook whose
+   `TRIGGER` is not `commit` (an `Edit|Write` check) needs its own entry
+   with that matcher; say so when you file one.
 
-   ```json
-   {
-     "hooks": {
-       "PreToolUse": [
-         {
-           "matcher": "Bash",
-           "hooks": [
-             {
-               "type": "command",
-               "if": "Bash(git commit *)",
-               "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/L017.sh"
-             }
-           ]
-         }
-       ]
-     }
-   }
-   ```
-
-   Events you will actually use: `PreToolUse` (before a tool runs; can block),
-   `PostToolUse` (after; cannot undo), `Stop` (when Claude finishes a turn).
-   For `Edit|Write` matchers set `TRIGGER="any"` and inspect `$NA_FILE`.
 4. Add the entry to `state.json` with `"form": "hook"`, `"mode": "warn"`, and
    `"file"`: the `LESSONS.md` the one-line rule goes into, relative to the
    root (for example `"packages/api/LESSONS.md"`). `na` manages a file
@@ -315,6 +293,7 @@ LESSONS.md                          the rules Claude reads (small, capped)
 .claude/never-again/lessons-template.md what a package LESSONS.md starts from
 .claude/never-again/verified/       one manifest per verify hook — local, gitignored
 .claude/hooks/na/L###.sh            the enforcement scripts
+.claude/hooks/na/dispatch           the one registered entry: runs the hooks the index selects
 .claude/hooks/na/na-lib.sh          shared by every hook: payload, mode, logging, decision
 .claude/hooks/na/na-verify.sh       the verify engine every verify hook sources
 .claude/hooks/na/na-manifest.py     what na-verify.sh compares the tree with
