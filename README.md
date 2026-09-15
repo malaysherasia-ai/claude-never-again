@@ -279,6 +279,15 @@ CLAUDE.md                           one marked block appended — never overwrit
   └── fires.log                     every fire, its outcome and grade — local, gitignored
 ```
 
+**Already have notes?** Most repositories do: a `CLAUDE.md` full of rules, a
+`NOTES.md`, a `docs/lessons.md`, a `.cursorrules`. `na import` lists them,
+with how many lines of notes each holds and which were imported before. Tell
+Claude once, *"import the existing notes with the never-again skill"*, and
+each note goes through the same triage as a fresh bug: the mechanical ones
+become hooks in warn mode, the judgement ones become one-liners, the rest are
+skipped. The source files are never edited; the tool only remembers which
+were imported, so the next `na import` shows only what changed.
+
 **Already have a `LESSONS.md`?** It is left exactly as it is, and Claude keeps
 reading it. But notes in your own words are invisible to `na`: not counted,
 not capped, not sorted, not enforced. The installer says so when it finds
@@ -369,6 +378,7 @@ na sort           # most-fired rules first, in every LESSONS.md
 na why L001       # read the full story behind a rule
 na retire L001    # drop the line, deregister the hook, keep the archive
 na demote L001    # blocking back to warn
+na import         # notes files already in the repo, and what was imported
 ```
 
 On Windows, `.claude\never-again\na.cmd` runs the same thing from PowerShell

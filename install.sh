@@ -240,6 +240,11 @@ else
   echo "  claude.md  block appended (backup at CLAUDE.md.bak)"
 fi
 
+# --- notes that predate the tool ----------------------------------------------
+# A CLAUDE.md full of rules, a NOTES.md, a docs/lessons.md: lessons the repo
+# already learned. `na import` finds them; the skill turns them into lessons.
+CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" import --brief
+
 # --- .gitignore -------------------------------------------------------------
 # The local-only block (fires.log, verified manifests, the CLAUDE.md backup)
 # is owned by `na`, which writes it fresh or brings an older one up to date.
@@ -292,7 +297,9 @@ cat <<'EOF'
 Done. LESSONS.md and the hooks are meant to be committed — they are team
 knowledge. Only fires.log, the verified manifests and CLAUDE.md.bak stay local.
 
-Next: fix a bug, then tell Claude "never again".
+Next: fix a bug, then tell Claude "never again". If the repo already has
+notes (na import lists them), tell Claude "import the existing notes with the
+never-again skill" so they count from day one.
 
 Stats:  .claude/never-again/na          (PowerShell: .claude\never-again\na.cmd)
 Handy:  alias na=".claude/never-again/na"

@@ -4,6 +4,17 @@ All notable changes to never-again are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- **`na import`: lessons the repo already learned.** Finds the notes files a
+  repository already holds (a `CLAUDE.md` full of rules, `NOTES.md`,
+  `docs/lessons.md`, `.cursorrules` and the like), counts their lines of
+  notes, and remembers which were imported and whether they changed since.
+  The installer lists them. The skill has an import procedure: split each
+  file into notes, run every note through the triage ladder, file what
+  survives, never edit the source, mark the file. A repo's accumulated
+  lessons count from day one instead of waiting for each bug to recur.
+
 From a review of everything since 0.2.0, seven angles, before anything else
 is built on it.
 
