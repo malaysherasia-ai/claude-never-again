@@ -107,7 +107,9 @@ tool. Warn mode is also how the lesson proves itself.
      four ways: a non-commit command (silent), a clean tree (silent), the bug
      reintroduced (`ask`, naming the file), and `git -C . commit` (still
      `ask`). Without `NA_DRY_RUN` every test run lands in `fires.log` and
-     counts toward promotion.
+     counts toward promotion. A verify-shaped hook still runs its command
+     under `NA_DRY_RUN`, because nothing else can decide, but records nothing;
+     self-test it with a fast command first, then set the real one.
 
 3. Register it. Read `.claude/settings.json`, merge this into the existing
    `hooks` object, write it back. **Never replace the file.** Use the `if`
@@ -135,7 +137,10 @@ tool. Warn mode is also how the lesson proves itself.
    Events you will actually use: `PreToolUse` (before a tool runs; can block),
    `PostToolUse` (after; cannot undo), `Stop` (when Claude finishes a turn).
    For `Edit|Write` matchers set `TRIGGER="any"` and inspect `$NA_FILE`.
-4. Add the entry to `state.json` with `"form": "hook"`, `"mode": "warn"`.
+4. Add the entry to `state.json` with `"form": "hook"`, `"mode": "warn"`, and
+   `"file"`: the `LESSONS.md` the one-line rule goes into, relative to the
+   root (for example `"packages/api/LESSONS.md"`). `na` manages a file
+   because a lesson names it, so this is what makes a package file count.
 5. Write the full story to `.claude/never-again/archive/<id>.md`.
 6. Add **one line** to `LESSONS.md` marked `[hook]` so the user can see it
    exists without reading the script.
@@ -145,7 +150,8 @@ will be resented within a day.
 
 ### 4. If it is a rule line
 
-Append to the nearest `LESSONS.md` (§6) in exactly this format:
+Append to the nearest `LESSONS.md` (§6) in exactly this format, and record
+that file's path as `"file"` in the lesson's `state.json` entry:
 
 ```
 - [scope] Rule as an imperative — when: trigger condition (L###)

@@ -13,6 +13,8 @@ case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && ROOT="$(cygpath -m "$ROOT")" ;;
 esac
 export CLAUDE_PROJECT_DIR="$ROOT" NA_EVENT=git
+# Resolve the interpreter once here rather than once per hook.
+source "$ROOT/.claude/hooks/na/na-lib.sh" 2>/dev/null && NA_PY="$(na_python)" && export NA_PY
 rc=0
 for h in "$ROOT"/.claude/hooks/na/L[0-9]*.sh; do
   [ -f "$h" ] || continue

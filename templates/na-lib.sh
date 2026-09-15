@@ -50,10 +50,10 @@ na_env() {
   NA_CLI="$NA_ROOT/.claude/never-again/na"
   NA_SOURCE="claude"
   [ "${NA_EVENT:-}" = "git" ] && NA_SOURCE="git"
-  if [ -n "${NA_PY:-}" ] && "$NA_PY" -c 'import sys' >/dev/null 2>&1; then
-    return 0
-  fi
-  NA_PY="$(na_python)"
+  # A runner that already resolved the interpreter (pre-commit exports NA_PY)
+  # goes through the same probe as NA_PYTHON, so there is one definition of
+  # "works".
+  NA_PY="$(NA_PYTHON="${NA_PY:-${NA_PYTHON:-}}" na_python)"
 }
 
 # na_begin ID TRIGGER
@@ -143,20 +143,40 @@ na_mode() {
   na_lesson_field mode warn
 }
 
+# na_notice MSG — something the person must see that is not a fire: the hook
+# is misconfigured, or a pass could not be recorded. Never blocks a commit.
+# By hand: stderr and exit 1. From git: stderr and exit 0. From Claude Code:
+# a systemMessage and exit 0.
+na_notice() {
+  case "${NA_SOURCE:-claude}" in
+    manual) echo "$1" >&2; exit 1 ;;
+    git)    echo "$1" >&2; exit 0 ;;
+    *)      "$NA_PY" -c 'import json,sys; print(json.dumps({"systemMessage": sys.argv[1]}))' "$1"; exit 0 ;;
+  esac
+}
+
 # na_pending — under git, after Claude Code's PreToolUse hook already asked
-# about this same commit: the person has answered. Records that they went
-# ahead and returns 0, so the caller can stay quiet instead of asking twice.
+# about this same commit of this same tree: the person has answered. Records
+# that they went ahead and returns 0, so the caller can stay quiet instead of
+# asking twice. A different tree never matches: a decline followed by a fix is
+# a new commit and gets verified. The answer is computed once per process.
 na_pending() {
   [ "$NA_SOURCE" = "git" ] || return 1
-  [ -z "${NA_DRY_RUN:-}" ] && [ -f "$NA_CLI" ] || return 1
-  "$NA_PY" "$NA_CLI" _proceeded --id "$NA_ID" --if-pending >/dev/null 2>&1
+  if [ -z "${NA_PENDING_RESULT:-}" ]; then
+    NA_PENDING_RESULT=1
+    if [ -z "${NA_DRY_RUN:-}" ] && [ -f "$NA_CLI" ] \
+       && "$NA_PY" "$NA_CLI" _proceeded --id "$NA_ID" --if-pending --same-tree >/dev/null 2>&1; then
+      NA_PENDING_RESULT=0
+    fi
+  fi
+  return "$NA_PENDING_RESULT"
 }
 
 # na_fire REASON — the mistake is about to happen. Records the fire and emits
 # the decision for whichever runner we are under, then exits.
 na_fire() {
   local reason="$1" mode decision label
-  mode="$(na_mode)"
+  mode="${NA_MODE:-$(na_mode)}"
   case "$mode" in
     warn)  decision="ask";  label="would block" ;;
     block) decision="deny"; label="blocked" ;;

@@ -24,7 +24,8 @@
 #
 # Files are listed by git (tracked plus untracked-not-ignored), so anything in
 # .gitignore never counts. A pass is recorded in .claude/never-again/verified/,
-# which is local to the machine.
+# which is local to the machine. Under NA_DRY_RUN=1 the command still runs,
+# because there is no other way to decide, but nothing is recorded or logged.
 
 source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
 
@@ -37,38 +38,43 @@ MANUAL=0
 
 if [ "$MANUAL" -eq 1 ]; then
   na_env || { echo "never-again $ID: no working python found" >&2; exit 1; }
+  NA_ID="$ID"; NA_SOURCE="manual"
 else
   na_begin "$ID" "$TRIGGER"
 fi
 
 HELPER="$NA_ROOT/.claude/hooks/na/na-manifest.py"
 
-# One spawn reads the config and compares the tree. First line: RUN=<command>.
+# One spawn reads the config and compares the tree.
 RES="$("$NA_PY" "$HELPER" check "$NA_ROOT" "$NA_STATE" "$ID" 2>&1)"; RC=$?
 RES="${RES//$'\r'/}"
-V_RUN="${RES#RUN=}"; V_RUN="${V_RUN%%$'\n'*}"
+V_RUN="$(printf '%s\n' "$RES" | sed -n 's/^RUN=//p' | head -1)"
+NA_MODE="$(printf '%s\n' "$RES" | sed -n 's/^MODE=//p' | head -1)"
 
 if [ "$RC" -ge 2 ]; then
-  # Unconfigured or misconfigured. A hook that silently does nothing is the
-  # failure this project exists to prevent, so say so where it will be seen.
-  MSG="never-again $ID: ${RES#ERROR=}"; MSG="${MSG%%$'\n'*}. Fix the \"verify\" block in state.json."
-  if [ "$MANUAL" -eq 1 ] || [ "$NA_SOURCE" = "git" ]; then echo "$MSG" >&2; exit 1; fi
-  "$NA_PY" -c 'import json,sys; print(json.dumps({"systemMessage": sys.argv[1]}))' "$MSG"
-  exit 0
+  # Unconfigured, misconfigured, or the helper itself broke. A hook that
+  # silently does nothing is the failure this project exists to prevent.
+  ERR="$(printf '%s\n' "$RES" | sed -n 's/^ERROR=//p' | head -1)"
+  na_notice "never-again $ID: ${ERR:-check failed (exit $RC)}. Fix the \"verify\" block in state.json."
 fi
+
+# Retired or unknown mode: nothing to enforce, and nothing to run.
+case "$NA_MODE" in warn|block) ;; *) [ "$MANUAL" -eq 1 ] || exit 0 ;; esac
 
 # Fresh, and not asked to run by hand: nothing to do.
 [ "$RC" -eq 0 ] && [ "$MANUAL" -eq 0 ] && exit 0
 
-# Under git after Claude Code already asked about this same commit, the
-# person has answered; do not run a long check a second time.
-if [ "$MANUAL" -eq 0 ] && [ "$NA_SOURCE" = "git" ] && na_pending; then
+# Under git, when Claude Code's PreToolUse hook already ran this check on this
+# exact tree and asked, the person has answered: do not run it again. A
+# different tree (they fixed something) never matches, so it is verified.
+if [ "$MANUAL" -eq 0 ] && na_pending; then
   exit 0
 fi
 
 # Run the command. Output goes to a file so a chatty suite is never copied
 # through a shell variable; the manual path streams it to the terminal.
 TMP="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/na-verify.$$")"
+trap 'rm -f "$TMP"' EXIT
 if [ "$MANUAL" -eq 1 ]; then
   (cd "$NA_ROOT" && bash -c "$V_RUN") 2>&1 | tee "$TMP"; PASS=${PIPESTATUS[0]}
 else
@@ -76,23 +82,22 @@ else
 fi
 
 if [ "$PASS" -eq 0 ]; then
-  if REC="$("$NA_PY" "$HELPER" commit "$NA_ROOT" "$NA_STATE" "$ID" 2>&1)"; then
-    rm -f "$TMP"
-    [ "$MANUAL" -eq 1 ] && echo "never-again $ID: check passed, $REC."
+  if [ -n "${NA_DRY_RUN:-}" ]; then
+    [ "$MANUAL" -eq 1 ] && echo "never-again $ID: check passed (dry run, nothing recorded)."
     exit 0
   fi
-  rm -f "$TMP"
-  MSG="never-again $ID: the check passed but the result could not be recorded (${REC%%$'\n'*}). It will run again next commit."
-  if [ "$MANUAL" -eq 1 ] || [ "$NA_SOURCE" = "git" ]; then echo "$MSG" >&2; exit 1; fi
-  "$NA_PY" -c 'import json,sys; print(json.dumps({"systemMessage": sys.argv[1]}))' "$MSG"
-  exit 0
+  REC="$("$NA_PY" "$HELPER" commit "$NA_ROOT" "$NA_STATE" "$ID" 2>&1)"; RRC=$?
+  REC="${REC//$'\r'/}"
+  if [ "$RRC" -eq 0 ]; then
+    [ "$MANUAL" -eq 1 ] && echo "never-again $ID: check passed, ${REC%%$'\n'*}."
+    exit 0
+  fi
+  na_notice "never-again $ID: the check passed but the result could not be recorded (${REC#ERROR=}). It will run again next commit."
 fi
 
 if [ "$MANUAL" -eq 1 ]; then
-  rm -f "$TMP"
   echo "never-again $ID: check failed, nothing recorded." >&2
   exit 1
 fi
 DETAIL="$(grep -v '^$' "$TMP" | tail -4 | tr '\n' ';' | cut -c1-300)"
-rm -f "$TMP"
 na_fire "$RULE  [$V_RUN failed: $DETAIL]"
