@@ -32,6 +32,8 @@ PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); echo "  PASS  $1"; }
 bad()  { FAIL=$((FAIL+1)); echo "  FAIL  $1"; }
 check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
+# In-place sed that works on both GNU and BSD sed (macOS needs a suffix).
+sedi(){ local e="$1"; shift; local f; for f in "$@"; do sed -i.bak "$e" "$f" && rm -f "$f.bak"; done; }
 
 # Never run inside the source checkout, or anywhere we did not just create. A
 # failed cd once left this script committing fixtures into the tool repo.
@@ -129,12 +131,12 @@ echo TODO-BLOCK > d0.txt
 OUTD="$(NA_DRY_RUN=1 dispatch "git commit -m x")"
 check "dispatch asks through the index"   'echo "$OUTD" | grep -q "\"ask\"" && echo "$OUTD" | grep -q "d0.txt"'
 check "dispatch: not a commit, silent"    '[ -z "$(NA_DRY_RUN=1 dispatch "ls")" ]'
-sed -i 's/^WATCH=""/WATCH=".css"/' "$HOOK"
+sedi 's/^WATCH=""/WATCH=".css"/' "$HOOK"
 check "WATCH: no .css changed, hook skipped" '[ -z "$(NA_DRY_RUN=1 dispatch "git commit -m x")" ]'
 echo x > e.css
 check "WATCH: a .css changed, hook runs"  'NA_DRY_RUN=1 dispatch "git commit -m x" | grep -q "\"ask\""'
-rm -f e.css d0.txt; sed -i 's/^WATCH=".css"/WATCH=""/' "$HOOK"
-cp "$HOOK" .claude/hooks/na/L009.sh; sed -i 's/^ID="L001"/ID="L009"/; s/^RULE=.*/RULE="second opinion"/' .claude/hooks/na/L009.sh
+rm -f e.css d0.txt; sedi 's/^WATCH=".css"/WATCH=""/' "$HOOK"
+cp "$HOOK" .claude/hooks/na/L009.sh; sedi 's/^ID="L001"/ID="L009"/; s/^RULE=.*/RULE="second opinion"/' .claude/hooks/na/L009.sh
 "$PYBIN" - <<'PY'
 import json, io
 p = '.claude/never-again/state.json'
