@@ -4,6 +4,18 @@ All notable changes to never-again are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- **Promotion rights in repo config.** `state.json` carries `"promotion"`:
+  `"pull-request"` (the default for new installs: `na promote` and
+  `na demote` refuse on the default branch of a repository with a remote, so
+  the change is reviewed like code), `"anyone"`, or a list of names or
+  emails matched against the git identity. Never automatic in any mode.
+- **`docs/TEAMS.md`.** What travels with git and what stays local, who
+  grades, who promotes, a proposal for opt-in shared fire history, a
+  proposal for shared packs, and why many hooks need an index rather than a
+  database.
+
 ### Changed
 
 - **One dispatcher instead of one entry per hook.** `.claude/hooks/na/dispatch`

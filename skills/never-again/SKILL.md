@@ -237,7 +237,11 @@ L017 has five correct fires in a row. Promote to blocking? (na promote L017)
 On a false positive, do not offer promotion — narrow the check instead. A hook
 that cries wolf gets uninstalled along with everything else.
 
-Promotion is always reversible: `na demote L017`. A hook that never fires is a
+Promotion is always reversible: `na demote L017`. Both obey the
+`promotion` setting in `state.json`: by pull request (default), anyone, or a
+list of names. If `na promote` refuses because the branch is the default
+branch, say so and stop; do not create the branch or the pull request
+unasked. A hook that never fires is a
 hook to retire: `na retire L017` removes the rule line, deregisters the hook,
 and moves its script to the archive so it stops costing anything.
 
