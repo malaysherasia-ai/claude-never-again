@@ -185,6 +185,44 @@ Filed L017 as a hook (warn mode) · 23 rules, 9 hooks
 Do not print a summary, a table, or a celebration. Those are tokens. The stats
 command exists for that and it is free.
 
+## Importing notes that predate the tool
+
+Most repositories already hold lessons somewhere: a `CLAUDE.md` full of
+rules, a `NOTES.md`, a `docs/lessons.md`, an editor rules file. The person
+should not have to wait for each bug to recur before it counts. When they
+ask to import existing notes, or `na import` lists files, do this:
+
+1. Run `.claude/never-again/na import`. It lists the candidate files, how
+   many lines of notes each holds, and which were imported before. Only
+   files marked "not imported" or "changed since import" need work.
+2. Take one file at a time. Read it and split it into individual notes: one
+   rule, gotcha or instruction each. Ignore prose that is not a rule (project
+   description, setup steps, links).
+3. Run every note through the triage ladder in §2, exactly as for a fresh
+   bug. Most notes are rung 3 (a one-liner) or rung 4 (nothing). Do not
+   invent a hook for a note that only needs judgement, and do not file a
+   note the person clearly already follows without help. If a note already
+   exists as a lesson, sharpen that lesson instead of adding a second.
+4. File what survives through §3 and §4: hooks in warn mode, one-liners in
+   the nearest `LESSONS.md`, the origin (file and quoted line) in each
+   archive entry. Respect the cap; if the file would push past it, stop and
+   say which existing rules could be retired.
+5. **Never edit or delete the source file.** It is theirs. If the notes came
+   from `CLAUDE.md`, suggest, once, which lines they could now remove
+   because a hook enforces them; the removal is their call.
+6. Record the file: `na import --mark <path> --filed <n>`. Then it is listed
+   as imported until it changes.
+7. Report with one line per file. This is the one place a short table is
+   fine, because it is a one-off:
+
+   ```
+   CLAUDE.md          31 notes  → 4 hooks, 9 rules, 18 skipped
+   docs/lessons.md    12 notes  → 1 hook, 6 rules, 5 skipped
+   ```
+
+A file with the same content twice, or a rules file for another editor that
+repeats `CLAUDE.md`, is imported once; mark the duplicates without filing.
+
 ## Promotion: warn → block
 
 A hook earns its way up. The user decides, never you.

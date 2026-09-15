@@ -24,6 +24,9 @@ Everything here is counted, not reasoned. It costs no tokens by design.
   na demote  L017 block -> warn
   na retire  L017 remove the rule line and deregister the hook; keep the archive
   na why     L017 print the full story
+  na import       list the notes files already in this repo that the skill can
+                  turn into lessons, and what has been imported so far
+  na import --mark PATH [--filed N]   record that PATH was imported
 
 Fires are recorded by the hooks themselves. What happened next is recorded too:
 "declined" when the person stopped at the warning, "proceeded" when they went
@@ -657,6 +660,127 @@ def cmd_lessons_report():
     return 0
 
 
+# ---------------------------------------------------------------------------
+# import: notes that predate the tool
+#
+# Most repositories already hold lessons somewhere: a CLAUDE.md full of rules,
+# a NOTES.md, a docs/lessons.md, an editor rules file. Finding them and
+# remembering which were imported is mechanical, so it lives here. Reading
+# each note and deciding whether it is a hook, a one-liner or nothing is
+# judgement, so that is the skill's job. Sources are never edited.
+# ---------------------------------------------------------------------------
+
+IMPORT_NAMES = {
+    "claude.md", "lessons.md", "lesson.md", "learnings.md", "learning.md",
+    "notes.md", "gotchas.md", "mistakes.md", "pitfalls.md", "til.md",
+    "conventions.md", "agents.md", "rules.md", ".cursorrules", ".windsurfrules",
+    ".clinerules", "copilot-instructions.md", "handover.md",
+}
+IMPORT_WORDS = ("lesson", "learn", "gotcha", "mistake", "pitfall", "postmortem",
+                "post-mortem", "retro")
+IMPORT_SKIP_DIRS = {".git", "node_modules", ".claude", "dist", "build", "vendor",
+                    "coverage", ".venv", "venv", "target", "__pycache__"}
+
+
+def import_candidates():
+    """Files that look like notes, with a count of non-heading lines. The
+    managed LESSONS.md files are not candidates: they are already ours."""
+    managed_set = {os.path.abspath(p) for p in lesson_files()}
+    out = []
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in IMPORT_SKIP_DIRS]
+        depth = os.path.relpath(dirpath, ROOT).count(os.sep)
+        if depth > 3:
+            dirnames[:] = []
+        for name in filenames:
+            low = name.lower()
+            looks = (low in IMPORT_NAMES
+                     or (low.endswith((".md", ".mdc", ".txt")) and any(w in low for w in IMPORT_WORDS))
+                     or (dirpath.replace(os.sep, "/").endswith("/.cursor/rules") and low.endswith(".mdc")))
+            if not looks:
+                continue
+            full = os.path.join(dirpath, name)
+            if os.path.abspath(full) in managed_set:
+                continue
+            try:
+                text = open(full, encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            if name.lower() == "claude.md":
+                text = BLOCK_RE.sub("\n", text)          # our own block is not a note
+            lines = [ln for ln in text.split("\n")
+                     if ln.strip() and not ln.lstrip().startswith(("#", "<!--", "```", "---"))]
+            if not lines:
+                continue
+            rel = os.path.relpath(full, ROOT).replace(os.sep, "/")
+            out.append((rel, len(lines), _sha_text(text)))
+    return sorted(out)
+
+
+def _sha_text(text):
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def cmd_import(argv):
+    state = load()
+    imports = state.setdefault("imports", {})
+    if "--mark" in argv:
+        rel = argv[argv.index("--mark") + 1].replace("\\", "/")
+        full = os.path.join(ROOT, rel)
+        if not os.path.isfile(full):
+            sys.exit("no such file: %s" % rel)
+        filed = int(argv[argv.index("--filed") + 1]) if "--filed" in argv else None
+        imports[rel] = {"sha": _sha_text(open(full, encoding="utf-8", errors="replace").read()),
+                        "date": time.strftime("%Y-%m-%d"), "filed": filed}
+        save(state)
+        print("%s marked imported%s" % (rel, "" if filed is None else " (%d lesson%s filed)" % (filed, "" if filed == 1 else "s")))
+        return 0
+    cands = import_candidates()
+    brief = "--brief" in argv
+    if not cands:
+        if not brief:
+            print("no notes files found that never-again could import.")
+        return 0
+    todo = []
+    rows = []
+    for rel, n, sha in cands:
+        rec = imports.get(rel)
+        if rec and rec.get("sha") == sha:
+            status = "imported %s" % rec.get("date", "")
+        elif rec:
+            status = "changed since import"
+            todo.append((rel, n))
+        else:
+            status = "not imported"
+            todo.append((rel, n))
+        rows.append((rel, n, status))
+    if brief:
+        if not todo:
+            return 0
+        print("  notes      %d file(s) of notes that never-again cannot count, cap or enforce:" % len(todo))
+        for rel, n in todo[:6]:
+            print("               %-40s %d line(s)" % (rel, n))
+        if len(todo) > 6:
+            print("               ... and %d more (na import lists them)" % (len(todo) - 6))
+        print("             To turn them into lessons, tell Claude once:")
+        print('               "import the existing notes with the never-again skill"')
+        return 0
+    print()
+    print("  notes already in this repo")
+    print("  " + "-" * 62)
+    for rel, n, status in rows:
+        print("  %-40s %5d line(s)   %s" % (rel, n, status))
+    print()
+    if todo:
+        print("  %d file(s) to import. Tell Claude once:" % len(todo))
+        print('    "import the existing notes with the never-again skill"')
+    else:
+        print("  everything here has been imported. Sources were left as they are.")
+    print()
+    return 0
+
+
 GIT_STUB_MARK = "never-again pre-commit stub"
 
 
@@ -873,6 +997,8 @@ def main():
         return cmd_gitignore(args[1:])
     if cmd == "_lessons-report":
         return cmd_lessons_report()
+    if cmd == "import":
+        return cmd_import(args[1:])
     if len(args) < 2:
         sys.exit(f"usage: na {cmd} L###")
     lid = args[1].upper()

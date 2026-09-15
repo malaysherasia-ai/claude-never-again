@@ -323,6 +323,31 @@ PY
 git add -A >/dev/null 2>&1; git commit -qm "teardown" >/dev/null 2>&1
 
 echo
+echo "=== notes that predate the tool are found, not edited ==="
+printf '# Notes\n\nAlways run the tests before pushing.\nNever hardcode the API key.\n' > NOTES.md
+mkdir -p .cursor/rules && printf 'Prefer named exports.\n' > .cursor/rules/style.mdc
+printf '\n## House rules\nUse two spaces.\nRun lint before commit.\n' >> CLAUDE.md
+OUTI="$("$PYBIN" $NA import)"
+check "lists NOTES.md with a count"        'echo "$OUTI" | grep -q "NOTES.md .*2 line(s)   not imported"'
+check "lists the editor rules file"        'echo "$OUTI" | grep -q "cursor/rules/style.mdc"'
+check "lists CLAUDE.md minus our block"    'echo "$OUTI" | grep -qE "CLAUDE.md .* [1-4] line\(s\)"'   # the block alone would add five
+check "does not list the managed root LESSONS.md" '! echo "$OUTI" | grep -q "^  LESSONS.md"'
+check "docs/LESSONS.md is a candidate"     'echo "$OUTI" | grep -q "docs/LESSONS.md"'
+"$PYBIN" $NA import --mark NOTES.md --filed 2 >/dev/null
+check "marked as imported"                 '"$PYBIN" $NA import | grep -q "NOTES.md .*imported"'
+check "source file untouched"              '[ "$(grep -c . NOTES.md)" -eq 3 ]'
+echo "Third note." >> NOTES.md
+check "changed since import is noticed"    '"$PYBIN" $NA import | grep -q "NOTES.md .*changed since import"'
+OUTI2="$(bash "$SRC/install.sh" . 2>&1)"
+check "installer points at the notes"      'echo "$OUTI2" | grep -q "import the existing notes"'
+rm -rf NOTES.md .cursor
+"$PYBIN" - <<'PY'
+import io
+p = 'CLAUDE.md'; s = io.open(p, encoding='utf-8').read().replace('\n## House rules\nUse two spaces.\nRun lint before commit.\n', '')
+io.open(p, 'w', encoding='utf-8', newline='\n').write(s)
+PY
+
+echo
 echo "=== CLAUDE.md.bak stays out of git ==="
 check "backup is gitignored"               'git check-ignore -q CLAUDE.md.bak'
 
