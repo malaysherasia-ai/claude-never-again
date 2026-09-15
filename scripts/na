@@ -446,14 +446,53 @@ def mark(lid, correct):
         print(f"{lid}: graded {what} a false positive, streak reset. Narrow the check before promoting.")
 
 
+def _git(*args):
+    import subprocess
+    try:
+        p = subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True)
+        return p.stdout.strip() if p.returncode == 0 else ""
+    except OSError:
+        return ""
+
+
+def promotion_allowed(state):
+    """Who may change a hook's mode, per state.json "promotion":
+    "pull-request" (default): not on the default branch of a repo with a remote;
+    "anyone": always; a list: only a git identity in the list.
+    Returns (ok, reason)."""
+    rule = state.get("promotion", "pull-request")
+    if rule == "anyone":
+        return True, ""
+    if isinstance(rule, list):
+        me = {_git("config", "user.name"), _git("config", "user.email")} - {""}
+        if me & set(rule):
+            return True, ""
+        return False, ("promotion is limited to %s in state.json; you are %s"
+                       % (", ".join(rule), ", ".join(sorted(me)) or "unknown to git"))
+    # pull-request
+    if not _git("remote"):
+        return True, ""                       # no remote: nothing to review through
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+    head = _git("symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    default = head.split("/", 1)[-1] if head else ""
+    if branch and branch != "HEAD" and branch not in {default, "main", "master"}:
+        return True, "this becomes team-wide when the branch is merged"
+    return False, ("promotion is by pull request here (state.json \"promotion\"). "
+                   "Make a branch, run this there, and open a pull request; "
+                   "or set \"promotion\": \"anyone\" for a single-person repo")
+
+
 def set_mode(lid, mode):
     state = load()
     entry = state.get("lessons", {}).get(lid)
     if not entry:
         sys.exit(f"{lid} not found in state.json")
+    ok, note = promotion_allowed(state)
+    if not ok:
+        sys.exit(f"{lid} not changed: {note}")
     entry["mode"] = mode
     save(state)
-    print(f"{lid} is now {mode}")
+    print(f"{lid} is now {mode}" + (f"  ({note})" if note else ""))
 
 
 def _settings_hooks(settings, match=None):

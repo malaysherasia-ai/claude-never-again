@@ -130,7 +130,10 @@ na promote L001
 ```
 
 Never automatic. A hook that blocks wrongly on day one gets the whole tool
-uninstalled.
+uninstalled. Who may promote is a setting in `state.json`: by pull request
+(the default: `na promote` refuses on the default branch, so the change is
+reviewed like code), anyone, or a list of names. [`docs/TEAMS.md`](docs/TEAMS.md)
+covers teams: what travels with git, who grades, who promotes, packs.
 
 **4. It guards every commit, not only Claude's.** The same script runs from
 git's own pre-commit hook, so a commit from a terminal, another agent, or a

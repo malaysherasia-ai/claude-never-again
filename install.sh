@@ -164,10 +164,11 @@ else
   "cap": 40,
   "loadedWarn": 60,
   "tokensPerPreventedRepeat": 8000,
+  "promotion": "pull-request",
   "lessons": {}
 }
 JSON
-  echo "  state      state.json created"
+  echo "  state      state.json created (promotion by pull request; see docs/TEAMS.md)"
 fi
 
 # --- settings.json ---------------------------------------------------------

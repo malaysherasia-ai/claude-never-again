@@ -215,6 +215,41 @@ ERR="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"; RC=$?
 check "runner warns on stderr"            'echo "$ERR" | grep -q "L001 would block"'
 check "warn mode lets git proceed"        '[ $RC -eq 0 ]'
 check "git fire logged as proceeded"      '[ "$(col 4)" = git ] && [ "$(col 5)" = proceeded ]'
+echo "--- promotion rights"
+git remote add origin https://example.invalid/repo.git 2>/dev/null
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['promotion'] = 'pull-request'
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+OUTP="$("$PYBIN" $NA promote L001 2>&1)"; RCP=$?
+check "pull-request: refused on the default branch" '[ $RCP -ne 0 ] && echo "$OUTP" | grep -q "pull request"'
+git checkout -q -b promote-l001
+check "pull-request: allowed on a branch"  '"$PYBIN" $NA promote L001 | grep -q "team-wide"'
+"$PYBIN" $NA demote L001 >/dev/null; git checkout -q main 2>/dev/null || git checkout -q master
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['promotion'] = ['someone.else@example.com']
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+check "named list: refused for others"     '! "$PYBIN" $NA promote L001 >/dev/null 2>&1'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['promotion'] = ['test@example.com']
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+check "named list: allowed for a listed identity" '"$PYBIN" $NA promote L001 | grep -q "now block"'
+"$PYBIN" $NA demote L001 >/dev/null
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['promotion'] = 'anyone'
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+git remote remove origin
 "$PYBIN" $NA promote L001 >/dev/null
 ERR="$(git commit -qm x 2>&1)"; RC=$?
 check "block mode: real git commit refused" '[ $RC -ne 0 ]'
