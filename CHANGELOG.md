@@ -4,6 +4,31 @@ All notable changes to never-again are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- **Verify-shaped hooks, configurable per lesson.** For rules of the shape
+  "X must pass before commit": a test suite, a smoke command, a build, a
+  browser boot. A hook is now five lines (`ID`, `RULE`, `TRIGGER`, a
+  `source` of `na-verify.sh`); the command, the watched extensions and the
+  skipped paths live in the lesson's `verify` block in `state.json`, so the
+  same engine serves a web page, a Python package or a Go service. It stays
+  silent while nothing watched has changed, runs the command itself when
+  something has, records a pass under `.claude/never-again/verified/` (local,
+  gitignored), and fires only on a failure. `--run` verifies by hand.
+  Watched files come from `git ls-files`, so nothing in `.gitignore` counts;
+  each manifest line carries size and mtime, so an unchanged file is not
+  re-read; a passing run reuses the digests the check just computed. A
+  missing, malformed or unwritable configuration is reported, never
+  swallowed. Under git after Claude Code already asked about the same
+  commit, the command is not run a second time. The browser-boot example is
+  that five-line hook plus a `verify` block; its private helpers are gone.
+- **`.gitignore` block owned by `na`.** One list in `na _gitignore`; the
+  installer writes it fresh or upgrades an older one wholesale, uninstall
+  removes it by the same shape, and the un-ignore advice for repos that
+  ignore `.claude/` comes from the same list. The advice now also tells a
+  repo whose hooks are force-added that new hooks will be dropped.
+- **`na retire` removes the lesson's verify manifest.**
+
 From the first install into a repository that was not ours: Windows 11, an
 existing large `CLAUDE.md`, a gitignored `.claude/` used by other tooling, a
 `docs/LESSONS.md` in a different format, and Vercel serving the repo root.

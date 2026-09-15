@@ -77,13 +77,32 @@ tool. Warn mode is also how the lesson proves itself.
      lists the files this commit could carry. A hook that scans every file in
      the repo cost 11 seconds per commit on a small site.
    - **Keep it under a second.** People wait on it every commit, forever.
-   - **If the rule is "X must have run" (a test, a boot, a build), the hook
-     runs X itself when it is stale.** Never test a stamp that a separate
-     command writes. `PreToolUse` sees the repository as it is *before* the
-     tool call, so `run-x && git commit` in one command fires every time, and
-     a prompt that is always approved trains everyone to approve prompts.
-     Give such a hook `"timeout"` in its settings entry. See
+   - **If the rule is "X must pass before commit" (a test suite, a smoke
+     command, a build, a browser boot), do not write a check at all.** Copy
+     `.claude/never-again/hook-verify-template.sh` instead, set `ID` and
+     `RULE`, and put the command and the watched files in `state.json`:
+
+     ```json
+     "verify": { "run": "npm test --silent", "watch": [".ts", ".tsx"], "skip": ["dist"] }
+     ```
+
+     That hook stays silent while nothing watched has changed, runs the
+     command itself when something has, and fires only when it fails. It
+     never asks "did you run it?": `PreToolUse` sees the repository as it is
+     *before* the tool call, so a stamp written by a separate command is
+     always stale and `run-x && git commit` fires every time. Files come
+     from git, so nothing in `.gitignore` is watched. Running it by hand:
+     `bash .claude/hooks/na/L017.sh --run`. The worked example is
      `examples/browser-boot` in the tool repo.
+
+     **Its settings entry needs a `"timeout"`, in seconds, longer than the
+     command takes.** Claude Code's default kills a slow hook, and a killed
+     hook records nothing and looks installed:
+
+     ```json
+     { "type": "command", "if": "Bash(git commit *)", "timeout": 180,
+       "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/L017.sh" }
+     ```
    - **Self-test with `NA_DRY_RUN=1`.** Pipe a fake payload through the script
      four ways: a non-commit command (silent), a clean tree (silent), the bug
      reintroduced (`ask`, naming the file), and `git -C . commit` (still
@@ -238,9 +257,14 @@ LESSONS.md                          the rules Claude reads (small, capped)
 .claude/never-again/state.json      lesson index, hook modes
 .claude/never-again/archive/L###.md the full story, read on demand only
 .claude/never-again/fires.log       one line per hook fire with its outcome and grade
-.claude/never-again/hook-template.sh what a new hook starts from
+.claude/never-again/hook-template.sh what a new check hook starts from
+.claude/never-again/hook-verify-template.sh what a new verify hook starts from
+.claude/never-again/lessons-template.md what a package LESSONS.md starts from
+.claude/never-again/verified/       one manifest per verify hook — local, gitignored
 .claude/hooks/na/L###.sh            the enforcement scripts
 .claude/hooks/na/na-lib.sh          shared by every hook: payload, mode, logging, decision
+.claude/hooks/na/na-verify.sh       the verify engine every verify hook sources
+.claude/hooks/na/na-manifest.py     what na-verify.sh compares the tree with
 .claude/hooks/na/_after.sh          records that a warned commit went ahead
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
 ```

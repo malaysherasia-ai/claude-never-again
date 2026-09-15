@@ -439,6 +439,11 @@ def retire(lid):
                 _drop_settings_entries(settings, entries)
                 _write_settings(settings)
                 dropped = len(entries)
+    for suffix in ("", ".next"):
+        try:
+            os.remove(os.path.join(BASE, "verified", lid + suffix))
+        except OSError:
+            pass
     moved = []
     if os.path.isdir(HOOKS):
         os.makedirs(ARCHIVE, exist_ok=True)
@@ -491,11 +496,45 @@ def why(lid):
 # ---------------------------------------------------------------------------
 
 BLOCK_RE = re.compile(r"\n*<!-- BEGIN never-again -->.*?<!-- END never-again -->\n?", re.S)
+# The local-only block in .gitignore. One list; install writes or upgrades
+# the block from it, uninstall removes by the same shape. Older releases also
+# wrote `.claude/never-again/.last-boot`, which the pattern still recognises.
+GITIGNORE_HEADER = "# never-again (local only)"
+GITIGNORE_LINES = (".claude/never-again/fires.log",
+                   ".claude/never-again/verified/",
+                   "CLAUDE.md.bak")
 GITIGNORE_RE = re.compile(
-    r"\n*# never-again \(local only\)\n"
-    r"(?:\.claude/never-again/fires\.log\n)?"
-    r"(?:\.claude/never-again/\.last-boot\n)?"
-    r"(?:CLAUDE\.md\.bak\n)?", re.S)
+    r"\n*" + re.escape(GITIGNORE_HEADER) + r"\n"
+    r"(?:(?:\.claude/never-again/[^\n]*|CLAUDE\.md\.bak)\n)*", re.S)
+GITIGNORE_UNIGNORE = ("!.claude/hooks/na/", "!.claude/never-again/",
+                      "!.claude/skills/never-again/") + GITIGNORE_LINES[:2]
+
+
+def cmd_gitignore(argv):
+    """Write or bring up to date the local-only block; --advice prints the
+    lines that share the hooks in a repo that ignores .claude/."""
+    if "--advice" in argv:
+        for ln in GITIGNORE_UNIGNORE:
+            print(ln)
+        return 0
+    gi = os.path.join(ROOT, ".gitignore")
+    text = open(gi, encoding="utf-8").read() if os.path.isfile(gi) else ""
+    block = GITIGNORE_HEADER + "\n" + "\n".join(GITIGNORE_LINES) + "\n"
+    m = GITIGNORE_RE.search(text)
+    if m and m.group(0).lstrip("\n") == block:
+        print("current")
+        return 0
+    verb = "upgraded" if m else "written"
+    if m:
+        text = GITIGNORE_RE.sub("\n", text)
+    text = text.rstrip("\n")
+    text = (text + "\n\n" if text else "") + block
+    with open(gi, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    print(verb)
+    return 0
+
+
 GIT_STUB_MARK = "never-again pre-commit stub"
 
 
@@ -709,6 +748,8 @@ def main():
         return cmd_fired(args[1].upper(), args[2], args[3], args[4] if len(args) > 4 else "")
     if cmd == "_proceeded":
         return cmd_proceeded(args[1:])
+    if cmd == "_gitignore":
+        return cmd_gitignore(args[1:])
     if len(args) < 2:
         sys.exit(f"usage: na {cmd} L###")
     lid = args[1].upper()

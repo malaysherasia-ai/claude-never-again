@@ -67,18 +67,21 @@ echo "  skill      .claude/skills/never-again/"
 cp "$SRC/scripts/na" "$DEST/.claude/never-again/na"
 chmod +x "$DEST/.claude/never-again/na"
 cp "$SRC/templates/na.cmd" "$DEST/.claude/never-again/na.cmd"
-cp "$SRC/templates/hook-warn.sh" "$DEST/.claude/never-again/hook-template.sh"
-cp "$SRC/templates/LESSONS.md"   "$DEST/.claude/never-again/lessons-template.md"
+cp "$SRC/templates/hook-warn.sh"   "$DEST/.claude/never-again/hook-template.sh"
+cp "$SRC/templates/hook-verify.sh" "$DEST/.claude/never-again/hook-verify-template.sh"
+cp "$SRC/templates/LESSONS.md"     "$DEST/.claude/never-again/lessons-template.md"
+cp "$SRC/templates/na-manifest.py" "$DEST/.claude/hooks/na/na-manifest.py"
 echo "  cli        .claude/never-again/na  (na.cmd for PowerShell and cmd)"
 
 # The shared library every hook sources, the after-commit resolver that records
 # what the person chose at a warn prompt, and the runner git calls so hooks
 # apply to commits made outside Claude Code's Bash tool too.
 cp "$SRC/templates/na-lib.sh"       "$DEST/.claude/hooks/na/na-lib.sh"
+cp "$SRC/templates/na-verify.sh"    "$DEST/.claude/hooks/na/na-verify.sh"
 cp "$SRC/templates/after-commit.sh" "$DEST/.claude/hooks/na/_after.sh"
 cp "$SRC/templates/pre-commit"      "$DEST/.claude/hooks/na/pre-commit"
 chmod +x "$DEST/.claude/hooks/na/_after.sh" "$DEST/.claude/hooks/na/pre-commit"
-echo "  hooks      .claude/hooks/na/na-lib.sh, _after.sh, pre-commit"
+echo "  hooks      .claude/hooks/na/na-lib.sh, na-verify.sh, na-manifest.py, _after.sh, pre-commit"
 
 # --- settings.json: the after-commit resolver --------------------------------
 # Merged, never replaced. Idempotent: an entry pointing at _after.sh is left as
@@ -248,39 +251,27 @@ else
 fi
 
 # --- .gitignore -------------------------------------------------------------
-GI="$DEST/.gitignore"
-CLAUDE_IGNORED=0
-if git -C "$DEST" check-ignore -q .claude/hooks/na 2>/dev/null; then
-  CLAUDE_IGNORED=1
-fi
-if [ "$CLAUDE_IGNORED" -eq 1 ]; then
-  # The whole .claude/ tree is per-user here, so the hooks, the modes and the
-  # skill never reach git. The tool still works on this machine; the "a new
-  # clone inherits every hook" promise does not hold. Say so once, loudly.
-  echo "  gitignore  .claude/ is ignored in this repo, so the hooks, state.json and skill"
-  echo "             stay on this machine and are NOT shared through git. LESSONS.md still is."
-  echo "             To share the hooks too, add these lines to .gitignore:"
-  echo "               !.claude/hooks/na/"
-  echo "               !.claude/never-again/"
-  echo "               !.claude/skills/never-again/"
-  echo "               .claude/never-again/fires.log"
-  echo "               .claude/never-again/.last-boot"
-elif ! { [ -f "$GI" ] && grep -q "never-again/fires.log" "$GI"; }; then
-  { echo; echo "# never-again (local only)"
-    echo ".claude/never-again/fires.log"
-    echo ".claude/never-again/.last-boot"
-    echo "CLAUDE.md.bak"; } >>"$GI"
-  echo "  gitignore  local state ignored"
-elif ! grep -q "^CLAUDE.md.bak$" "$GI"; then
-  # An install from before 0.2.1 wrote the block without this line.
-  "$PY" - "$GI" <<'PYEOF'
-import io, sys
-p = sys.argv[1]
-s = io.open(p, encoding="utf-8").read()
-s = s.replace(".claude/never-again/.last-boot\n", ".claude/never-again/.last-boot\nCLAUDE.md.bak\n", 1)
-io.open(p, "w", encoding="utf-8", newline="\n").write(s)
-PYEOF
-  echo "  gitignore  CLAUDE.md.bak added to the local-only block"
+# The local-only block (fires.log, verified manifests, the CLAUDE.md backup)
+# is owned by `na`, which writes it fresh or brings an older one up to date.
+case "$(CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _gitignore)" in
+  written)  echo "  gitignore  local state ignored" ;;
+  upgraded) echo "  gitignore  local-only block brought up to date" ;;
+esac
+
+# A repo that ignores .claude/ keeps the hooks on this machine. Ask git about
+# a hook that does not exist yet, which is the question that matters: will the
+# next hook the skill writes reach the repo? Hooks already force-added are a
+# different case and get a different sentence.
+if git -C "$DEST" check-ignore -q .claude/hooks/na/L000.sh 2>/dev/null; then
+  if git -C "$DEST" ls-files --error-unmatch .claude/hooks/na >/dev/null 2>&1; then
+    echo "  gitignore  .claude/ is ignored but the hooks are tracked: existing hooks are shared,"
+    echo "             new ones will be dropped by 'git add' until these lines are in .gitignore:"
+  else
+    echo "  gitignore  .claude/ is ignored in this repo, so the hooks, state.json and skill"
+    echo "             stay on this machine and are NOT shared through git. LESSONS.md still is."
+    echo "             To share the hooks too, add these lines to .gitignore:"
+  fi
+  CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _gitignore --advice | sed 's/^/               /'
 fi
 
 # --- static hosts -------------------------------------------------------------

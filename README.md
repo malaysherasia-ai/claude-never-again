@@ -266,6 +266,7 @@ CLAUDE.md                           one marked block appended — never overwrit
 .claude/skills/never-again/         the skill
 .claude/hooks/na/L###.sh            the enforcement scripts
 .claude/hooks/na/na-lib.sh          shared by every hook
+.claude/hooks/na/na-verify.sh       the "X must pass before commit" engine, plus na-manifest.py
 .claude/hooks/na/_after.sh          records that a warned commit went ahead
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
 .claude/settings.json               _after.sh registered on PostToolUse — merged, never replaced
@@ -274,6 +275,7 @@ CLAUDE.md                           one marked block appended — never overwrit
   ├── na                            the stats CLI  (na.cmd for PowerShell)
   ├── state.json                    lesson index, hook modes
   ├── archive/L###.md               the full story, read only when asked
+  ├── verified/                     one manifest per verify hook — local, gitignored
   └── fires.log                     every fire, its outcome and grade — local, gitignored
 ```
 

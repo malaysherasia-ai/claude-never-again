@@ -1,0 +1,17 @@
+{
+  "lessons": {
+    "L001": {
+      "scope": "web",
+      "rule": "Boot the build in a real browser, not `node --check`",
+      "form": "hook",
+      "mode": "warn",
+      "filed": "2026-09-12",
+      "hook": ".claude/hooks/na/L001.sh",
+      "verify": {
+        "run": "node scripts/boot-check.mjs",
+        "watch": [".html", ".css", ".js", ".mjs"],
+        "skip": ["scripts"]
+      }
+    }
+  }
+}
