@@ -11,7 +11,10 @@
 #   * reinstall crashed on a CLAUDE.md with a byte cp1252 cannot decode
 #
 #   bash tests/hooks.sh [tmpdir]
-set -uo pipefail
+# No pipefail: `producer | grep -q` is everywhere here, grep closes the pipe
+# on the first match, and pipefail would turn the producer's broken pipe into
+# a failed check. It did, on macOS.
+set -u
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 T="${1:-${TMPDIR:-/tmp}/na-hooks-test}"
