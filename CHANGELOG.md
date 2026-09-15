@@ -8,11 +8,12 @@ All notable changes to never-again are recorded here.
 
 From the first import run on a client repository (Windows 11):
 
-- **The gitignore replacement now shares `.claude/settings.json` too**, so
-  the Claude Code hook registrations travel with the hook scripts. The
-  README states the rule plainly: rules, hooks and state travel with git;
-  the wiring (git's hooks folder) does not, so a fresh clone runs the
-  installer once.
+- **The installer registers every hook from `state.json`** (`na _register`),
+  so `.claude/settings.json` never has to be shared: it is often the home of
+  other tooling and machine-specific paths, and sharing it broke a clone in
+  the first client repo. A fresh clone runs the installer once and every
+  hook is wired, with its timeout for verify hooks. The README states the
+  rule: rules, hooks and state travel with git; the wiring does not.
 
 - **An emoji in the commit message blinded every hook on Windows.** The
   command extractor printed through a cp1252 pipe and crashed, so the hook

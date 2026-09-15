@@ -299,9 +299,11 @@ the rest are dropped. Your original stays in git history.
 **What a fresh clone gets, and what it does not.** `LESSONS.md`, the hook
 scripts, `state.json` and the archive travel with git, so a clone has every
 rule in the mode the team earned. The wiring does not travel: git never
-clones its own hooks folder, and `.claude/settings.json` is only shared if
-your `.gitignore` allows it. So after cloning, run the installer once. It is
-safe to re-run, changes nothing that already matches, and takes a second.
+clones its own hooks folder, and `.claude/settings.json` is yours, often
+holding other tooling and machine-specific paths, so it is not asked to. After
+cloning, run the installer once: it registers every hook in `state.json` with
+Claude Code and installs the git stub. It is safe to re-run, changes nothing
+that already matches, and takes a second.
 
 `install.sh` backs up `CLAUDE.md` before touching it and is safe to re-run.
 `LESSONS.md` and the hooks are meant to be committed — they are team knowledge,

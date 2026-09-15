@@ -93,6 +93,24 @@ json.dump(s, io.open(p, 'w', encoding='utf-8'), indent=2)
 PY
 
 echo
+echo "=== a clone gets its hooks registered by the installer ==="
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/settings.json'
+d = json.load(io.open(p, encoding='utf-8'))
+for g in d['hooks']['PreToolUse']:
+    g['hooks'] = [h for h in g['hooks'] if '/na/L001.sh' not in h['command']]
+json.dump(d, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+check "L001 unregistered for the test"    '! grep -q "L001.sh" .claude/settings.json'
+OUTR="$(bash "$SRC/install.sh" . 2>&1)"
+check "installer registers it from state"  'echo "$OUTR" | grep -q "registered L001" && grep -q "L001.sh" .claude/settings.json'
+check "registered once, not twice"         '[ "$(grep -c "L001.sh" .claude/settings.json)" -eq 1 ]'
+OUTR2="$(bash "$SRC/install.sh" . 2>&1)"
+check "second run reports nothing to do"   'echo "$OUTR2" | grep -q "already registered"'
+echo "$OUTR2" | grep -q "already registered" || echo "$OUTR2" | sed 's/^/      | /' | head -30
+
+echo
 echo "=== decides from the command, not the substring ==="
 check "clean tree: silent"                '[ -z "$(fire "git commit -m x")" ]'
 echo TODO-BLOCK > b.txt
@@ -402,7 +420,7 @@ io.open(p, 'w', encoding='utf-8', newline='\n').write(s.replace('.claude/\n', ad
 PY
 check "applying the advice really un-ignores the hooks" '! git check-ignore -q .claude/hooks/na/L000.sh'
 check "and keeps the local files ignored"  'git check-ignore -q .claude/never-again/fires.log'
-check "and shares the hook registrations"  '! git check-ignore -q .claude/settings.json'
+check "settings.json stays the person's own" 'git check-ignore -q .claude/settings.json'
 "$PYBIN" - <<'PY'
 import io, subprocess
 p = '.gitignore'; s = io.open(p, encoding='utf-8').read()
