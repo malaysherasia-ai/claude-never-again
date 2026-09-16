@@ -101,7 +101,9 @@
 
   #na .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
   #na .steps, #na .term { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-  #na .steps { padding: 6px; }
+  #na .steps { padding: 6px; display: grid; }
+  #na .steps .list { grid-area: 1 / 1; }
+  #na .steps .list[hidden] { display: block; visibility: hidden; }   /* keeps the cell's height */
   #na .step {
     display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start;
     padding: 10px 12px; border-radius: 8px; color: var(--dim); font-size: 14px; cursor: pointer;
@@ -346,14 +348,29 @@
   let cycle = 0, idx = -1, timer = null;
   let playing = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  function drawSteps() {
-    stepsEl.innerHTML = '';
-    cycles[cycle].forEach((s, i) => {
+  // Both lists exist from the start, stacked in one grid cell; only the
+  // active one is visible. The cell is as tall as the taller list, so
+  // switching cycles never moves the page and nothing is ever measured.
+  const lists = cycles.map((steps, c) => {
+    const box = document.createElement('div');
+    box.className = 'list';
+    steps.forEach((s, i) => {
       const d = document.createElement('div');
-      d.className = 'step' + (i < idx ? ' done' : i === idx ? ' on' : ''); d.setAttribute('role', 'listitem');
+      d.className = 'step'; d.setAttribute('role', 'listitem');
       d.innerHTML = `<span class="n">${String(i + 1).padStart(2, '0')}</span><span>${s.label}</span>`;
-      d.addEventListener('click', () => replayTo(i));
-      stepsEl.appendChild(d);
+      d.addEventListener('click', () => { if (cycle !== c) { cycle = c; } replayTo(i); });
+      box.appendChild(d);
+    });
+    stepsEl.appendChild(box);
+    return box;
+  });
+  function drawSteps() {
+    lists.forEach((box, c) => {
+      box.hidden = c !== cycle;
+      if (c !== cycle) return;
+      Array.from(box.children).forEach((d, i) => {
+        d.className = 'step' + (i < idx ? ' done' : i === idx ? ' on' : '');
+      });
     });
   }
   function replayTo(n) {
@@ -389,19 +406,20 @@
     (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => { $('copy').textContent = 'COPIED'; setTimeout(() => $('copy').textContent = 'COPY', 1400); }).catch(() => {});
   });
   if (!playing) { $('b-play').textContent = 'Play'; $('b-play').setAttribute('aria-pressed', 'false'); }
-  // Reserve the taller cycle's height for the steps panel, and re-measure on
-  // resize, so switching cycles or printing lines never moves the page.
-  function reserve() {
-    const savedCycle = cycle, savedIdx = idx;
-    let max = 0;
-    for (let c = 0; c < cycles.length; c++) { cycle = c; idx = -1; drawSteps(); max = Math.max(max, stepsEl.offsetHeight); }
-    cycle = savedCycle; idx = savedIdx; drawSteps();
-    stepsEl.style.minHeight = max + 'px';
+  // Start when the demo is in view, not at page load: the animation's timers
+  // and DOM writes are the page's main-thread cost, and on a phone this
+  // section is below the fold.
+  const canvas = root.querySelector('.canvas');
+  let started = false;
+  function start() { if (started) return; started = true; go(1); }
+  if ('IntersectionObserver' in window && canvas) {
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) { io.disconnect(); start(); }
+    }, { rootMargin: '120px' });
+    io.observe(canvas);
+  } else {
+    start();
   }
-  reserve();
-  let rt = null;
-  window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(reserve, 150); });
-  go(1);
 })();
 </script>
 </body>

@@ -1,67 +1,69 @@
 # never-again
 
-**Your coding agent keeps making the same mistake. Stop writing it a reminder —
-take the mistake away.**
+**Your coding agent keeps making the same mistake. Stop writing it a reminder.
+Take the mistake away.**
 
-`never-again` captures each bug you fix and asks one question: *can this be
-enforced instead of remembered?* If it can, it writes a hook that blocks the
-wrong path automatically. If it can't, it files one short line. Nothing else.
+`never-again` catches each bug you fix and asks one question: can a script
+stop this next time? If it can, it writes a hook that blocks the wrong action.
+If it cannot, it writes one short line in a rules file. That is all.
 
-MIT licensed. Local. No account, no telemetry, no network calls.
+MIT licensed. Runs on your machine. No account, no tracking, no network calls.
 
-**macOS, Linux, WSL** — needs git, bash, Python 3.7+
+**macOS, Linux, WSL:** needs git, bash and Python 3.7 or newer.
 
 ```bash
 git clone --depth 1 https://github.com/malaysherasia-ai/claude-never-again.git
 bash claude-never-again/install.sh .
 ```
 
-**Windows** — needs Git for Windows and Python 3.7+
+**Windows:** needs Git for Windows and Python 3.7 or newer.
 
 ```powershell
 git clone --depth 1 https://github.com/malaysherasia-ai/claude-never-again.git
 & "C:\Program Files\Git\bin\bash.exe" claude-never-again/install.sh .
 ```
 
-Run it with `bash`, not `./install.sh`. The executable bit does not survive a
-ZIP download and is unreliable on Windows checkouts; `bash` always works.
+Run it with `bash`, not `./install.sh`. A ZIP download loses the file's
+run permission, and Windows checkouts are unreliable about it. `bash` always
+works.
 
-**Run it yourself, from a terminal.** Claude Code's auto mode refuses to run
-an installer it has not seen before, refuses to edit its own
-`.claude/settings.json`, and refuses to write into `.git/hooks/`, even when
-you approve. That is Claude Code protecting you, not a bug in either tool.
-If you must install from inside Claude Code, turn auto mode off first, or
-expect to apply these two pieces by hand afterwards:
+**Run the installer yourself, from a terminal.** Claude Code's auto mode will
+not run an installer it has never seen. It also will not edit its own
+`.claude/settings.json` or write into `.git/hooks/`, even when you say yes.
+That is Claude Code protecting you, not a bug. If you must install from
+inside Claude Code, turn auto mode off first. Otherwise, add these two pieces
+by hand afterwards:
 
 ```jsonc
-// .claude/settings.json — merge into "hooks"; keep everything else
+// .claude/settings.json: merge into "hooks"; keep everything else
 "PostToolUse":        [{ "matcher": "Bash", "hooks": [{ "type": "command", "if": "Bash(git commit *)", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/_after.sh" }] }],
 "PostToolUseFailure": [{ "matcher": "Bash", "hooks": [{ "type": "command", "if": "Bash(git commit *)", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/_after.sh" }] }]
 ```
 
 ```sh
-# .git/hooks/pre-commit — create if you have none; otherwise add the last two lines to yours
+# .git/hooks/pre-commit: create it if you have none; otherwise add the last two lines to yours
 #!/bin/sh
 r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
 [ -f "$r" ] || exit 0
 exec "$r" "$@"
 ```
 
-The same applies to `na`: in auto mode Claude Code may refuse to run it. It
-is a stats script; run it from a terminal.
+The same goes for `na`, the stats command. In auto mode Claude Code may
+refuse to run it. Run it from a terminal.
 
-**Three things to check in your repo.** The installer looks for each and says
-so, but they are worth knowing in advance:
+**Three things to check in your repo.** The installer looks for each one and
+tells you. It helps to know them ahead of time:
 
-- If `.gitignore` ignores `.claude/`, the hooks and their modes stay on your
-  machine and are not shared through git. `LESSONS.md` still is. The installer
-  prints the un-ignore lines to add if you want the hooks shared.
-- If the repo root is served as a static site (Vercel, Netlify, GitHub Pages),
-  `/LESSONS.md` and `/.claude/` become public URLs, hooks and settings
-  included. Add `.claude`, `LESSONS.md` and `CLAUDE.md` to `.vercelignore`,
-  publish a subdirectory, or accept that they are readable.
-- If the repo already has a `LESSONS.md` somewhere other than the root, in its
-  own format, it is left alone: `na` only manages the root file and files
+- If `.gitignore` hides the `.claude/` folder, the hooks and their settings
+  stay on your machine. They do not reach git. `LESSONS.md` still does. The
+  installer prints the lines to use if you want the hooks shared.
+- If your repo root is served as a website (Vercel, Netlify, GitHub Pages),
+  then `/LESSONS.md` and `/.claude/` become public web pages, hooks and
+  settings included. Add `.claude`, `LESSONS.md` and `CLAUDE.md` to
+  `.vercelignore`, publish a subfolder instead, or accept that people can read
+  them.
+- If your repo already has a `LESSONS.md` somewhere other than the root, in
+  its own format, it is left alone. `na` only manages the root file and files
   that carry the tool's marker comment.
 
 ---
@@ -70,18 +72,18 @@ so, but they are worth knowing in advance:
 
 Because `CLAUDE.md` is advice, and advice has two problems.
 
-It is **paid for on every turn.** A 200-line instructions file is 200 lines of
-context in every message you send, forever, whether it is relevant or not.
-Prompt caching makes that cheap in money. It does not make it cheap in
-attention, and attention is what compliance runs on.
+You **pay for it on every turn.** A 200-line instructions file is 200 lines
+of context in every message you send, forever, whether it matters right now
+or not. Prompt caching makes that cheap in money. It does not make it cheap
+in attention, and attention is what makes rules get followed.
 
-And it is **optional.** The longer a session runs, the more likely an
-instruction is drifted past. Plenty of people have written the rule down and
-watched the same bug ship anyway.
+And it is **optional.** The longer a session runs, the more likely a rule
+gets skipped. Plenty of people have written the rule down and watched the same
+bug ship anyway.
 
-A hook is neither. It costs one line until it fires. In block mode it returns
-a denial the agent cannot talk its way around; in warn mode it asks you, and
-records what you answered.
+A hook is neither. It costs one line until it fires. In block mode it says no,
+and the agent cannot talk its way past that. In warn mode it asks you, and it
+writes down what you answered.
 
 ```
              cost per turn     can be ignored
@@ -89,40 +91,40 @@ CLAUDE.md      every line           yes
 hook            one line             no
 ```
 
-`never-again` is the bridge between the two: it decides which of your lessons
-belongs in which place, and writes the hook for you.
+`never-again` is the bridge between the two. It decides which of your lessons
+belongs where, and it writes the hook for you.
 
 ---
 
 ## What it actually does
 
 **1. You fix a bug.** Then you say "never again", or Claude notices the
-correction itself.
+correction on its own.
 
-**2. It triages.** Four rungs, first fit wins:
+**2. It sorts the lesson.** Four options, first fit wins:
 
 | | | |
 |---|---|---|
-| Already enforceable | a linter or tsconfig flag covers it | turn that on, file nothing |
-| Hook-shaped | describable as "before X, fail if Y" | write a hook |
-| Judgement | a script can't make the call | one line in `LESSONS.md` |
-| Not worth it | one-off, or already impossible | file nothing |
+| Already covered | a linter or tsconfig flag catches it | turn that on, file nothing |
+| Hook-shaped | you can say it as "before X, fail if Y" | write a hook |
+| Judgement | a script cannot make the call | one line in `LESSONS.md` |
+| Not worth it | a one-off, or already impossible | file nothing |
 
-That fourth row matters. Most tools file everything. This one is allowed to say
+That last row matters. Most tools file everything. This one is allowed to say
 no, because every line it writes is rent you pay forever.
 
-**3. The hook starts in warn mode.** Instead of blocking, it raises a
-permission prompt with the reason, and you choose. What you chose is recorded
-without you doing anything: if the commit went ahead the fire is marked
-*proceeded*, if you stopped it is marked *declined*, and a declined fire counts
-as correct. Overrule the record when you want to:
+**3. The hook starts in warn mode.** Instead of blocking, it shows you a
+prompt with the reason, and you choose. Your choice is written down without
+any work from you. If the commit went ahead, the fire is marked *proceeded*.
+If you stopped, it is marked *declined*, and a declined fire counts as
+correct. You can overrule the record when you want:
 
 ```bash
 na ok L001        # that fire was right
-na wrong L001     # false positive — narrow it, streak resets
+na wrong L001     # false alarm; narrow the check, the streak resets
 ```
 
-Grades attach to real fires. After five correct in a row, `na` says so, and
+Grades attach to real fires. After five correct in a row, `na` tells you, and
 you promote it yourself:
 
 ```bash
@@ -130,55 +132,57 @@ na promote L001
 ```
 
 Never automatic. A hook that blocks wrongly on day one gets the whole tool
-uninstalled. Who may promote is a setting in `state.json`: by pull request
-(the default: `na promote` refuses on the default branch, so the change is
-reviewed like code), anyone, or a list of names. [`docs/TEAMS.md`](docs/TEAMS.md)
-covers teams: what travels with git, who grades, who promotes, packs.
+uninstalled. Who may promote is a setting in `state.json`. The default is by
+pull request: `na promote` refuses on the default branch, so the change gets
+reviewed like code. The other options are anyone, or a list of names.
+[`docs/TEAMS.md`](docs/TEAMS.md) covers teams: what travels with git, who
+grades, who promotes, and packs.
 
 **4. It guards every commit, not only Claude's.** The same script runs from
-git's own pre-commit hook, so a commit from a terminal, another agent, or a
-different tool meets the same rule. Warn mode prints and lets it through;
-block mode refuses it.
+git's own pre-commit hook. A commit from a terminal, another agent, or a
+different tool meets the same rule. Warn mode prints and lets it through.
+Block mode refuses it.
 
 ---
 
 ## Before and after
 
-A real one — the bug this tool came out of.
+A real one: the bug this tool came out of.
 
 Every button on a page went dead. The cause was a `let` used before its
-declaration: a temporal dead zone error that aborts the script at boot, so no
-event listener ever attaches. `node --check` passed, because it only parses.
+declaration. That is a temporal dead zone error. It stops the script at
+startup, so no click handler ever attaches. `node --check` passed, because it
+only checks syntax.
 
-**What most setups do** — add a line to `CLAUDE.md`:
+**What most setups do** is add a line to `CLAUDE.md`:
 
 ```
 Always test in a real browser before shipping.
 ```
 
-Read on every turn from now until the end of the project. Followed when the
-context window is short and the agent is paying attention.
+That line gets read on every turn until the end of the project. It gets
+followed when the context window is short and the agent is paying attention.
 
-**What `never-again` does** — files this instead:
+**What `never-again` does** is file this instead:
 
 ```
 - [web] [hook] Boot the build in a real browser, not `node --check` — when: before commit (L001)
 ```
 
-...and writes `.claude/hooks/na/L001.sh`, which compares every source file
-against the last successful headless boot, runs the boot itself if anything
-changed, and refuses the commit only if the page does not boot.
+It also writes `.claude/hooks/na/L001.sh`. That script compares every source
+file against the last browser boot that passed. If anything changed, it runs
+the boot itself. It refuses the commit only if the page does not boot.
 
-The rule is now unskippable and costs one line to carry. Full worked example in
-[`examples/browser-boot/`](examples/browser-boot/).
+The rule now cannot be skipped, and it costs one line to carry. The full
+worked example is in [`examples/browser-boot/`](examples/browser-boot/).
 
 ---
 
 ## Stats, counted not generated
 
-The block below is **illustrative sample output from a mature install**, not
-results measured by this project. It is here to show the shape of the report.
-For what this repository has actually recorded, run `na` in your own checkout.
+The block below is **sample output from a mature install**, not results from
+this project. It shows the shape of the report. To see what your own repo has
+recorded, run `na` there.
 
 ```
 $ na
@@ -209,61 +213,61 @@ $ na
     na promote L009
 ```
 
-This is a Python script counting lines in files. **No model is involved**, which
-is the point — a tool that spends tokens telling you how many tokens it saved
-has argued itself out of existence.
+This is a Python script counting lines in files. **No model is involved.**
+That is the point. A tool that spends tokens to tell you how many tokens it
+saved has argued itself out of a job.
 
 "Prevented" counts block-mode denials plus warn-mode fires where the person
-stopped. A single stopped mistake can fire twice if the agent retries, so read
-it as an upper bound. "Warned past" is the honest column: prompts that were
+stopped. One stopped mistake can fire twice if the agent retries, so read it
+as an upper bound. "Warned past" is the honest column: prompts that were
 approved anyway.
 
-The token figure is an estimate from one constant you control: what a repeated
-debug-and-fix cycle costs you. The default of 8,000 is deliberately
-conservative. Change it in `state.json`.
+The token figure is an estimate built on one number you control: what a
+repeated debug-and-fix cycle costs you. The default of 8,000 is on the low
+side on purpose. Change it in `state.json`.
 
-**Nothing is sent anywhere.** If you want to share your number, copy it into a
-post. There is no phone-home, and there never will be — a tool that reads your
-repo has no business opening a socket.
+**Nothing is sent anywhere.** If you want to share your number, copy it into
+a post. There is no phone-home, and there never will be. A tool that reads
+your repo has no business opening a network connection.
 
 ---
 
 ## Monorepos and parallel agents
 
-Lessons scope to the nearest `LESSONS.md`. A rule about `packages/api` lives in
-`packages/api/LESSONS.md` and costs nothing while you work on the web app.
+Lessons belong to the nearest `LESSONS.md`. A rule about `packages/api` lives
+in `packages/api/LESSONS.md` and costs nothing while you work on the web app.
 
-Parallel agents each append to the file nearest their own working directory, so
+Parallel agents each write to the file nearest their own working folder, so
 two writers never touch one file. Hooks are shared, so the skill re-reads
-`state.json` to claim an id and merges into `settings.json` rather than
+`state.json` to claim an id, and it merges into `settings.json` instead of
 replacing it.
 
 ---
 
 ## Two things every hook gets right for you
 
-Hooks source one shared library, `.claude/hooks/na/na-lib.sh`, so the parts
-that went wrong in the first release live in one place.
+Hooks all load one shared library, `.claude/hooks/na/na-lib.sh`, so the parts
+that went wrong in the first release now live in one place.
 
-**It decides from the command, not a substring.** `git -C . commit`,
+**It decides from the command, not from a word in it.** `git -C . commit`,
 `git  commit` and `git add -A && git commit` all count as a commit.
 `echo "git commit"` does not.
 
-**It never asks "did you run X?"** A `PreToolUse` hook sees the repository as
-it was before the tool call, so a hook that checks for a stamp fires every time
-the stamp is written in the same command as the commit. Six of the first nine
-real fires were exactly that. If a rule is "X must have run", the hook runs X
-itself when it is stale, and fires only when X fails.
+**It never asks "did you run X?"** A `PreToolUse` hook sees the repo as it
+was before the tool call. So a hook that checks for a stamp file fires every
+time the stamp is written in the same command as the commit. Six of the first
+nine real fires were exactly that. If a rule says "X must have run", the hook
+runs X itself when things are stale, and fires only when X fails.
 
-It also looks at the files that changed rather than the whole tree, records
-what happened after it fired, and stays out of `fires.log` during self-tests
-(`NA_DRY_RUN=1`).
+It also looks only at the files that changed, not the whole tree. It records
+what happened after it fired. And it stays out of `fires.log` during
+self-tests (`NA_DRY_RUN=1`).
 
 **One process, however many hooks.** Claude Code runs one entry, the
 dispatcher. It reads the commit once, finds Python once, lists the changed
 files once, and asks `na index` which hooks exist, in which mode, watching
-which file types. A hook that watches `.css` is not run for a commit that
-touched none. Ten hooks or two hundred cost one setup; only the checks that
+which file types. A hook that watches `.css` does not run for a commit that
+touched none. Ten hooks or two hundred cost one setup. Only the checks that
 apply run, and their answers come back as one decision.
 
 ---
@@ -272,53 +276,53 @@ apply run, and their answers come back as one decision.
 
 ```
 LESSONS.md                          the rules Claude reads (small, capped, ordered)
-CLAUDE.md                           one marked block appended — never overwritten
+CLAUDE.md                           one marked block added at the end; never overwritten
 .claude/skills/never-again/         the skill
-.claude/hooks/na/L###.sh            the enforcement scripts
+.claude/hooks/na/L###.sh            the hook scripts
 .claude/hooks/na/dispatch           the one registered hook: runs the others from na index
 .claude/hooks/na/na-lib.sh          shared by every hook
 .claude/hooks/na/na-verify.sh       the "X must pass before commit" engine, plus na-manifest.py
 .claude/hooks/na/_after.sh          records that a warned commit went ahead
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
-.claude/settings.json               two entries, dispatch and _after.sh — merged, never replaced
-.git/hooks/pre-commit               a two-line stub, only if you had none
+.claude/settings.json               two entries, dispatch and _after.sh; merged, never replaced
+.git/hooks/pre-commit               a short stub, only if you had none
 .claude/never-again/
-  ├── na                            the stats CLI  (na.cmd for PowerShell)
+  ├── na                            the stats command  (na.cmd for PowerShell)
   ├── state.json                    lesson index, hook modes
   ├── archive/L###.md               the full story, read only when asked
-  ├── verified/                     one manifest per verify hook — local, gitignored
-  └── fires.log                     every fire, its outcome and grade — local, gitignored
+  ├── verified/                     one record per verify hook; local, gitignored
+  └── fires.log                     every fire, its outcome and grade; local, gitignored
 ```
 
-**Already have notes?** Most repositories do: a `CLAUDE.md` full of rules, a
+**Already have notes?** Most repos do: a `CLAUDE.md` full of rules, a
 `NOTES.md`, a `docs/lessons.md`, a `.cursorrules`. `na import` lists them,
-with how many lines of notes each holds and which were imported before. Tell
-Claude once, *"import the existing notes with the never-again skill"*, and
-each note goes through the same triage as a fresh bug: the mechanical ones
-become hooks in warn mode, the judgement ones become one-liners, the rest are
-skipped. The source files are never edited; the tool only remembers which
-were imported, so the next `na import` shows only what changed.
+with how many lines of notes each one holds and which were imported before.
+Tell Claude once, *"import the existing notes with the never-again skill"*.
+Each note then goes through the same sorting as a fresh bug. The ones a
+script can check become hooks in warn mode. The judgement calls become
+one-liners. The rest are skipped. The source files are never edited. The tool
+only remembers which files were imported, so the next `na import` shows only
+what changed.
 
-**Already have a `LESSONS.md`?** It is left exactly as it is, and Claude keeps
+**Already have a `LESSONS.md`?** It stays exactly as it is, and Claude keeps
 reading it. But notes in your own words are invisible to `na`: not counted,
 not capped, not sorted, not enforced. The installer says so when it finds
 them. To bring them in, tell Claude once: *"read LESSONS.md and refile each
-note through the never-again skill"*. Each note goes through the same triage;
-the mechanical ones become hooks, the judgement ones become one-liners, and
-the rest are dropped. Your original stays in git history.
+note through the never-again skill"*. Each note goes through the same sorting.
+Your original stays in git history.
 
 **What a fresh clone gets, and what it does not.** `LESSONS.md`, the hook
-scripts, `state.json` and the archive travel with git, so a clone has every
-rule in the mode the team earned. The wiring does not travel: git never
-clones its own hooks folder, and `.claude/settings.json` is yours, often
-holding other tooling and machine-specific paths, so it is not asked to. After
-cloning, run the installer once: it registers every hook in `state.json` with
-Claude Code and installs the git stub. It is safe to re-run, changes nothing
-that already matches, and takes a second.
+scripts, `state.json` and the archive travel with git. So a clone has every
+rule, in the mode the team earned. The wiring does not travel. Git never
+clones its own hooks folder, and `.claude/settings.json` is yours; it often
+holds other tools and paths that only work on one machine, so we do not ask
+you to share it. After cloning, run the installer once. It registers every
+hook in `state.json` with Claude Code and installs the git stub. It is safe
+to run again, changes nothing that already matches, and takes a second.
 
 `install.sh` backs up `CLAUDE.md` before touching it and is safe to re-run.
-`LESSONS.md` and the hooks are meant to be committed — they are team knowledge,
-and a new hire inherits every scar the team has earned.
+`LESSONS.md` and the hooks are meant to be committed. They are team knowledge.
+A new hire inherits every scar the team has earned.
 
 ---
 
@@ -328,9 +332,9 @@ and a new hire inherits every scar the team has earned.
 .claude/never-again/na uninstall          # or: bash install.sh --uninstall .
 ```
 
-It prints exactly what it will do and waits for a yes. Pass `--yes` to skip the
-prompt. Anything other than `y` removes nothing, and so does a closed stdin, so
-it is safe to pipe.
+It prints exactly what it will do and waits for a yes. Pass `--yes` to skip
+the prompt. Anything other than `y` removes nothing. A closed stdin also
+removes nothing, so it is safe to pipe.
 
 ```
   remove   .claude/skills/never-again/        12 file(s)
@@ -343,60 +347,62 @@ it is safe to pipe.
   keep     LESSONS.md                         your rules outlive the tool
 ```
 
-Four things it will not do. It does not rewrite `CLAUDE.md`, only cuts the
-block between the `never-again` markers and leaves the rest of your file alone.
-It does not replace `.claude/settings.json`, only drops the hook entries that
+Four things it will not do. It does not rewrite `CLAUDE.md`. It only cuts
+the block between the `never-again` markers and leaves the rest alone. It
+does not replace `.claude/settings.json`. It only drops the hook entries that
 point at `.claude/hooks/na/`, so your own hooks and settings stay. It does not
 touch a git `pre-commit` hook it did not write. And it does not delete
-`LESSONS.md`: those rules are yours, they read perfectly well without the tool
-that enforced them, and deleting a stranger's notes is not an uninstaller's
-job. Remove it yourself if you want it gone.
+`LESSONS.md`. Those rules are yours, they read fine without the tool that
+enforced them, and deleting a stranger's notes is not an uninstaller's job.
+Remove it yourself if you want it gone.
 
 Running it twice is fine. The second run has nothing to do and says so.
 
-`tests/uninstall.sh` asserts all of the above against a repo that already has
+`tests/uninstall.sh` checks all of the above against a repo that already has
 its own `CLAUDE.md` sections, its own hooks in `settings.json`, its own git
-`pre-commit` and its own `.gitignore` entries, because the property worth
-testing is not that uninstall deletes things but that it deletes only its own.
-`tests/hooks.sh` runs a hook built from the template through both Claude Code's
-payload and a real `git commit`, and checks the fire log, the grading, retire,
-and reinstall. Run both with `bash tests/hooks.sh && bash tests/uninstall.sh`.
+`pre-commit` and its own `.gitignore` entries. The point of the test is not
+that uninstall deletes things, but that it deletes only its own.
+`tests/hooks.sh` builds a hook from the template and runs it through both
+Claude Code's payload and a real `git commit`. It checks the fire log, the
+grading, retire, and reinstall. Run both with
+`bash tests/hooks.sh && bash tests/uninstall.sh`. Every pull request runs
+them on Ubuntu, macOS and Windows.
 
 ---
 
 ## The cap, and why it's a cap
 
-The direction is well supported: compliance falls as the list of simultaneous
-instructions grows, and models drop rules quietly rather than refusing.
-IFScale (Distyl AI, 2025) measured 20 models on 10 to 500 concurrent
-instructions in a report-writing task; even the best reached only 68% at the
-top end, and earlier instructions were followed more reliably than later ones.
-That task is not coding, and nobody has measured the same curve for rules in a
-`CLAUDE.md`. What `never-again` borrows is the direction and the primacy
+The direction is well supported: the more rules a model is given at once,
+the fewer it follows, and it drops them quietly instead of refusing. IFScale
+(Distyl AI, 2025) tested 20 models on 10 to 500 rules at once in a
+report-writing task. Even the best reached only 68% at the top end, and rules
+given earlier were followed more reliably than later ones. That task is not
+coding, and nobody has measured the same curve for rules in a `CLAUDE.md`.
+What `never-again` borrows is the direction and the "earlier is better"
 effect, not a number. The "I wrote the rule down and it ignored it anyway"
-experience is real; the exact threshold for your repo is not in any paper.
+experience is real. The exact limit for your repo is not in any paper.
 
-So `never-again` does three things the research supports and one it doesn't
-claim:
+So `never-again` does three things the research supports, and one thing it
+does not claim:
 
-- **Capped.** 40 rules per file by default. Not a magic number — it's the
-  largest file a person still reads top to bottom. Change `cap` in
+- **Capped.** 40 rules per file by default. Not a magic number. It is about
+  the largest file a person still reads top to bottom. Change `cap` in
   `state.json` if your team disagrees.
-- **Ordered.** `na sort` puts the most-fired rules first, because primacy is
-  real and free.
-- **Scoped.** Rules load per package, not per repo. The number that matters is
-  *rules loaded per turn*; `na` reports it as "loaded here" and warns above 60
-  (`loadedWarn`). When it warns, split, retire, or promote. Don't raise it.
+- **Ordered.** `na sort` puts the most-fired rules first, because "earlier is
+  better" is real and free.
+- **Scoped.** Rules load per package, not per repo. The number that matters
+  is *rules loaded per turn*. `na` reports it as "loaded here" and warns above
+  60 (`loadedWarn`). When it warns, split, retire, or promote. Do not raise it.
 - **Not claimed:** that 40, or 60, is the right number for you. The evidence
-  says fewer and ordered; it doesn't name a threshold. Yours will show up in
-  your own fire log.
+  says fewer and ordered. It does not name a limit. Yours will show up in your
+  own fire log.
 
-`na` is short for `.claude/never-again/na` — alias it.
+`na` is short for `.claude/never-again/na`. Alias it.
 
 ```bash
 na sort           # most-fired rules first, in every LESSONS.md
 na why L001       # read the full story behind a rule
-na retire L001    # drop the line, deregister the hook, keep the archive
+na retire L001    # drop the line, unregister the hook, keep the archive
 na demote L001    # blocking back to warn
 na import         # notes files already in the repo, and what was imported
 na index          # every live hook: mode, trigger, scope, watched extensions
@@ -409,13 +415,13 @@ or cmd.
 
 ## Prior art
 
-This stands on two well-established ideas and joins them.
+This stands on two well-known ideas and joins them.
 
-The `lessons.md` pattern — a file the agent writes discoveries into mid-task —
-is widely used and well documented. So are Claude Code hooks, where the settled
-wisdom is that rules shape behaviour and hooks enforce it.
+The `lessons.md` pattern, a file the agent writes discoveries into mid-task,
+is widely used and well documented. So are Claude Code hooks, where the
+settled wisdom is that rules shape behaviour and hooks enforce it.
 
-What has been missing is the step between: deciding which lessons deserve
+What was missing is the step between: deciding which lessons deserve
 enforcement, and generating the hook. That is all this does.
 
 ## License
@@ -424,6 +430,6 @@ MIT.
 
 ---
 
-`never-again` is an independent open-source project. Not affiliated with,
-endorsed by, or sponsored by Anthropic. Claude and Claude Code are trademarks
-of Anthropic, PBC.
+`never-again` is an independent open-source project. It is not affiliated
+with, endorsed by, or sponsored by Anthropic. Claude and Claude Code are
+trademarks of Anthropic, PBC.
