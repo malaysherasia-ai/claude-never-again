@@ -115,7 +115,7 @@
   #na .term { font-family: var(--mono); font-size: 12.5px; padding: 14px 16px; min-height: 100%; }
   #na .term .bar { display: flex; gap: 6px; margin-bottom: 12px; }
   #na .term .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line-2); display: block; }
-  #na .term .out { color: var(--muted); white-space: pre-wrap; margin: 0; line-height: 1.7; }
+  #na .term .out { color: var(--muted); white-space: pre-wrap; margin: 0; line-height: 1.7; height: calc(1.7em * 9); overflow: hidden; }   /* nine lines, fixed: the pane never grows */
   #na .term .out .p { color: var(--text); }
   #na .term .out .a { color: var(--accent); }
   #na .term .out .w { color: var(--warn); }
@@ -389,6 +389,18 @@
     (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => { $('copy').textContent = 'COPIED'; setTimeout(() => $('copy').textContent = 'COPY', 1400); }).catch(() => {});
   });
   if (!playing) { $('b-play').textContent = 'Play'; $('b-play').setAttribute('aria-pressed', 'false'); }
+  // Reserve the taller cycle's height for the steps panel, and re-measure on
+  // resize, so switching cycles or printing lines never moves the page.
+  function reserve() {
+    const savedCycle = cycle, savedIdx = idx;
+    let max = 0;
+    for (let c = 0; c < cycles.length; c++) { cycle = c; idx = -1; drawSteps(); max = Math.max(max, stepsEl.offsetHeight); }
+    cycle = savedCycle; idx = savedIdx; drawSteps();
+    stepsEl.style.minHeight = max + 'px';
+  }
+  reserve();
+  let rt = null;
+  window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(reserve, 150); });
   go(1);
 })();
 </script>
