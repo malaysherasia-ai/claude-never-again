@@ -56,7 +56,9 @@ tells you. It helps to know them ahead of time:
 
 - If `.gitignore` hides the `.claude/` folder, the hooks and their settings
   stay on your machine. They do not reach git. `LESSONS.md` still does. The
-  installer prints the lines to use if you want the hooks shared.
+  installer prints the lines to use if you want the hooks shared. Do not share
+  `.claude/settings.json` itself: other tools write machine-specific paths
+  into it. The installer registers the hooks on each clone instead.
 - If your repo root is served as a website (Vercel, Netlify, GitHub Pages),
   then `/LESSONS.md` and `/.claude/` become public web pages, hooks and
   settings included. Add `.claude`, `LESSONS.md` and `CLAUDE.md` to
@@ -114,7 +116,12 @@ That last row matters. Most tools file everything. This one is allowed to say
 no, because every line it writes is rent you pay forever.
 
 **3. The hook starts in warn mode.** Instead of blocking, it shows you a
-prompt with the reason, and you choose. Your choice is written down without
+prompt with the reason, and you choose. One thing to know before you rely on
+that: in Claude Code's auto mode, the harness answers the prompt for you and
+you never see it. The hook still records the fire, and it now also hands the
+reason to the model as a system message so the model can stop itself, but
+only block mode stops a commit when nobody is watching. If you run in auto
+mode, promote the hooks you trust and read `na` now and then. Your choice is written down without
 any work from you. If the commit went ahead, the fire is marked *proceeded*.
 If you stopped, it is marked *declined*, and a declined fire counts as
 correct. You can overrule the record when you want:
@@ -139,9 +146,14 @@ reviewed like code. The other options are anyone, or a list of names.
 grades, who promotes, and packs.
 
 **4. It guards every commit, not only Claude's.** The same script runs from
-git's own pre-commit hook. A commit from a terminal, another agent, or a
-different tool meets the same rule. Warn mode prints and lets it through.
-Block mode refuses it.
+git's own pre-commit and pre-merge-commit hooks. A commit or a merge from a
+terminal, another agent, or a different tool meets the same rule. Warn mode
+prints and lets it through. Block mode refuses it.
+
+What it does not cover, so you know the edge: `git cherry-pick` and
+`git rebase` create commits without running those git hooks, and a merge
+done on GitHub (`gh pr merge`, the merge button) happens on their server. If
+a rule must hold there too, it belongs in CI as well.
 
 ---
 
@@ -285,7 +297,7 @@ CLAUDE.md                           one marked block added at the end; never ove
 .claude/hooks/na/_after.sh          records that a warned commit went ahead
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
 .claude/settings.json               two entries, dispatch and _after.sh; merged, never replaced
-.git/hooks/pre-commit               a short stub, only if you had none
+.git/hooks/pre-commit               a short stub, only if you had none; pre-merge-commit likewise
 .claude/never-again/
   ├── na                            the stats command  (na.cmd for PowerShell)
   ├── state.json                    lesson index, hook modes
@@ -400,6 +412,7 @@ does not claim:
 `na` is short for `.claude/never-again/na`. Alias it.
 
 ```bash
+na --version      # which release is installed
 na sort           # most-fired rules first, in every LESSONS.md
 na why L001       # read the full story behind a rule
 na retire L001    # drop the line, unregister the hook, keep the archive

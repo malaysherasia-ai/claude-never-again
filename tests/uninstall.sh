@@ -111,6 +111,7 @@ check "skill dir gone"              '[ ! -d .claude/skills/never-again ]'
 check "hooks/na gone"               '[ ! -d .claude/hooks/na ]'
 check "never-again dir gone"        '[ ! -d .claude/never-again ]'
 check "git stub gone"               '[ ! -f .git/hooks/pre-commit ]'
+check "merge stub gone"             '[ ! -f .git/hooks/pre-merge-commit ]'
 
 echo
 echo "=== kept what it does not own ==="

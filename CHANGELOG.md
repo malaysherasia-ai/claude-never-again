@@ -2,6 +2,35 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.0.1] — 2026-09-16
+
+From the first field report: a client site, two days, two false fires, one
+real lesson filed minutes after a production bug.
+
+### Fixed
+
+- **A warn was invisible in auto mode.** The harness answered the prompt and
+  the person found both fires a day later in the log. A warn now also
+  carries a `systemMessage` with the reason, so the model reads it whatever
+  the mode and can stop itself. The README says plainly that only block mode
+  stops a commit when nobody is watching.
+- **Merges ran no hook.** The installer now also writes a `pre-merge-commit`
+  stub, and uninstall removes it. Cherry-pick and rebase still run neither
+  git hook, and merges on GitHub happen on their server; the README lists
+  that edge.
+- **`na --help` and `na --version`** are answered instead of parsed as a
+  lesson id.
+- **`na.cmd` ships with LF endings**, so git stops warning on every add.
+
+### Changed
+
+- The hook template carries the chain guard as a line to uncomment for any
+  check that reads repository state.
+- The archive entry gets a **What would have gone red** line, taken from the
+  field report's best lesson: when the answer is "nothing", the fix belongs
+  in the code, not in a new check.
+- The repo checks say not to share `.claude/settings.json`, and why.
+
 ## [1.0.0] — 2026-09-15
 
 What 1.0 means here: the formats are frozen. The `fires.log` columns, the

@@ -2,4 +2,4 @@
 *.sh text eol=lf
 scripts/na text eol=lf
 templates/pre-commit text eol=lf
-templates/na.cmd text eol=crlf
+templates/na.cmd text eol=lf
