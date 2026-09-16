@@ -299,7 +299,12 @@
   function reset() {
     NODES.forEach(n => state(n, null)); FLOWS.forEach(f => flow(f, false));
     show(p1, false); show(p2, false); pk(p1, '', false); pk(p2, '', false);
+    // Snap the packets back to the start: a reset is not a move, and sliding
+    // them across the canvas read as dragging something.
+    root.classList.add('snap');
     move(p1, -20, 190); move(p2, -20, 190);
+    void root.offsetWidth;            // apply the snapped positions now
+    root.classList.remove('snap');
     $('grade').textContent = 'streak 0 / 5'; $('mode').textContent = 'warn'; $('cap').textContent = '17/40'; $('dens').textContent = 'loaded 17'; $('tri').textContent = 'before X, fail if Y';
     clear();
   }
