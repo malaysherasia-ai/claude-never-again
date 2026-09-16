@@ -121,21 +121,25 @@ SHEOF
 if HOOKDIR="$(git -C "$DEST" rev-parse --git-path hooks 2>/dev/null)"; then
   case "$HOOKDIR" in /*|[A-Za-z]:*) ;; *) HOOKDIR="$DEST/$HOOKDIR" ;; esac
   mkdir -p "$HOOKDIR"
-  STUB="$HOOKDIR/pre-commit"
-  if [ ! -f "$STUB" ]; then
-    na_stub >"$STUB"; chmod +x "$STUB"
-    echo "  git        pre-commit stub installed"
-  elif [ "$(cat "$STUB")" = "$(na_stub)" ]; then
-    echo "  git        pre-commit stub already in place"
-  elif [ "$(cat "$STUB")" = "$(na_old_stub)" ] || [ "$(cat "$STUB")" = "$(na_old_stub_2)" ]; then
-    na_stub >"$STUB"; chmod +x "$STUB"
-    echo "  git        pre-commit stub upgraded"
-  elif grep -q "never-again" "$STUB"; then
-    echo "  git        pre-commit already calls never-again (edited by hand, left alone)"
-  else
-    echo "  git        you already have a pre-commit hook; add this line to it:"
-    echo '             "$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit" || exit 1'
-  fi
+  # pre-commit covers `git commit`; pre-merge-commit covers `git merge`.
+  # Cherry-pick and rebase run neither, and the README says so.
+  for STUBNAME in pre-commit pre-merge-commit; do
+    STUB="$HOOKDIR/$STUBNAME"
+    if [ ! -f "$STUB" ]; then
+      na_stub >"$STUB"; chmod +x "$STUB"
+      echo "  git        $STUBNAME stub installed"
+    elif [ "$(cat "$STUB")" = "$(na_stub)" ]; then
+      echo "  git        $STUBNAME stub already in place"
+    elif [ "$(cat "$STUB")" = "$(na_old_stub)" ] || [ "$(cat "$STUB")" = "$(na_old_stub_2)" ]; then
+      na_stub >"$STUB"; chmod +x "$STUB"
+      echo "  git        $STUBNAME stub upgraded"
+    elif grep -q "never-again" "$STUB"; then
+      echo "  git        $STUBNAME already calls never-again (edited by hand, left alone)"
+    else
+      echo "  git        you already have a $STUBNAME hook; add this line to it:"
+      echo '             "$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit" || exit 1'
+    fi
+  done
 else
   echo "  git        not a git repository; commit hooks will run from Claude Code only"
 fi

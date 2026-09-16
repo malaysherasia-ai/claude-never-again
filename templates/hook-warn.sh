@@ -27,6 +27,12 @@ WATCH=""                        # e.g. ".css .html": only run when such a file c
 
 na_begin "$ID" "$TRIGGER"       # sets NA_ROOT, NA_PY, NA_CMD, NA_FILE; exits if not our trigger
 
+# Uncomment if the check reads repository state (current branch, what is
+# staged, a tag). PreToolUse sees that state from before the command, so
+# `git checkout -b fix && git commit` looks like a commit on the old branch.
+# The git runner sees the state at commit time and decides for chains.
+# [ "$NA_SOURCE" = claude ] && na_is_chain "$NA_CMD" && exit 0
+
 # --- CHECK ------------------------------------------------------------------
 # Set VIOLATION=1 and DETAIL when the mistake is about to happen.
 

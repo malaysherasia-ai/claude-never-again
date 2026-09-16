@@ -11,6 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
+VERSION = "1.0.1"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -1020,20 +1021,21 @@ def uninstall(argv):
             rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
             removals.append((rel + "/", "%d file(s)" % _count(path), path))
 
-    git_stub = None
+    git_stubs = []
     hd = git_hooks_dir()
     if hd:
-        cand = os.path.join(hd, "pre-commit")
-        try:
-            if os.path.isfile(cand) and GIT_STUB_MARK in open(cand, encoding="utf-8", errors="replace").read():
-                git_stub = cand
-                removals.append((os.path.relpath(cand, ROOT).replace(os.sep, "/"),
-                                 "git pre-commit stub", cand))
-            elif os.path.isfile(cand):
-                keeps.append((os.path.relpath(cand, ROOT).replace(os.sep, "/"),
-                              "not ours; remove the never-again line yourself if you added one"))
-        except OSError:
-            pass
+        for name in ("pre-commit", "pre-merge-commit"):
+            cand = os.path.join(hd, name)
+            try:
+                if os.path.isfile(cand) and GIT_STUB_MARK in open(cand, encoding="utf-8", errors="replace").read():
+                    git_stubs.append(cand)
+                    removals.append((os.path.relpath(cand, ROOT).replace(os.sep, "/"),
+                                     "git %s stub" % name, cand))
+                elif os.path.isfile(cand):
+                    keeps.append((os.path.relpath(cand, ROOT).replace(os.sep, "/"),
+                                  "not ours; remove the never-again line yourself if you added one"))
+            except OSError:
+                pass
 
     claude_text = None
     if os.path.isfile(claude_md):
@@ -1126,7 +1128,7 @@ def uninstall(argv):
     # --- then the directories. BASE holds this script, so it goes last. -----
     failures = []
     for rel, _detail, path in sorted(removals, key=lambda r: r[2] == BASE):
-        if path == git_stub:
+        if path in git_stubs:
             try:
                 os.remove(path)
                 print("  removed  %s" % rel)
@@ -1162,6 +1164,12 @@ def main():
     if not args or args[0] == "stats":
         return stats()
     cmd = args[0]
+    if cmd in ("--help", "-h", "help"):
+        print(USAGE)
+        return 0
+    if cmd in ("--version", "-v", "version"):
+        print("never-again " + VERSION)
+        return 0
     if cmd == "sort":
         return sort_rules()
     if cmd == "uninstall":

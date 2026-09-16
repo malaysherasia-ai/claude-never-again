@@ -236,12 +236,19 @@ na_fire() {
     "$NA_PY" "$NA_CLI" _fired "$NA_ID" "$mode" claude "$NA_TOOL_USE_ID" >/dev/null 2>&1
   fi
 
+  # In warn mode the prompt goes to the person. Under auto mode the harness
+  # answers it and nobody sees anything: the first field report found both
+  # of its fires a day later in the log. So a warn also carries a
+  # systemMessage, which the model reads whatever the mode, and can act on.
   "$NA_PY" -c '
 import json, sys
-print(json.dumps({"hookSpecificOutput": {
+out = {"hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": sys.argv[1],
-    "permissionDecisionReason": sys.argv[2]}}))
+    "permissionDecisionReason": sys.argv[2]}}
+if sys.argv[1] == "ask":
+    out["systemMessage"] = sys.argv[2] + " (warn mode: if this prompt was answered for you, stop and check before going on)"
+print(json.dumps(out))
 ' "$decision" "never-again $NA_ID $label: $reason"
   exit 0
 }

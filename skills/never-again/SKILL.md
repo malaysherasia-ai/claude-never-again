@@ -128,7 +128,11 @@ tool. Warn mode is also how the lesson proves itself.
    `"file"`: the `LESSONS.md` the one-line rule goes into, relative to the
    root (for example `"packages/api/LESSONS.md"`). `na` manages a file
    because a lesson names it, so this is what makes a package file count.
-5. Write the full story to `.claude/never-again/archive/<id>.md`.
+5. Write the full story to `.claude/never-again/archive/<id>.md`: symptom,
+   cause, rule, fix, and one line headed **What would have gone red:** naming
+   the existing check that would have caught it, or "nothing". That line is
+   where the honesty lives. When the answer is "nothing", the fix belongs in
+   the code path, not in a new check, and the lesson may be rung 4.
 6. Add **one line** to `LESSONS.md` marked `[hook]` so the user can see it
    exists without reading the script.
 
@@ -214,8 +218,11 @@ repeats `CLAUDE.md`, is imported once; mark the duplicates without filing.
 
 A hook earns its way up. The user decides, never you.
 
-You will not see a warn-mode fire: the prompt goes to the person, not to the
-model. So do not ask "was that right?" after commits. The record keeps itself:
+You will not see a warn-mode prompt: it goes to the person. You will see the
+reason as a system message, so if a hook warned and the call went ahead
+anyway (auto mode answers prompts for the person), stop and check the reason
+before continuing. Do not ask "was that right?" after commits. The record
+keeps itself:
 
 - The hook logs the fire when it asks.
 - If the tool call then runs, `_after.sh` marks the fire **proceeded**: the
