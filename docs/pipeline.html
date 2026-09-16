@@ -242,7 +242,7 @@
       </g>
       <!-- packets -->
       <g id="p1" class="packet hidden" style="transform: translate(-20px,190px)"><circle class="ring" r="7"/><circle r="5"/></g>
-      <g id="p2" class="packet hidden" style="transform: translate(1240px,190px)"><circle class="ring" r="7"/><circle r="5"/></g>
+      <g id="p2" class="packet hidden" style="transform: translate(1085px,-40px)"><circle class="ring" r="7"/><circle r="5"/></g>
     </svg>
     </div>
   </div>
@@ -299,7 +299,7 @@
   function reset() {
     NODES.forEach(n => state(n, null)); FLOWS.forEach(f => flow(f, false));
     show(p1, false); show(p2, false); pk(p1, '', false); pk(p2, '', false);
-    move(p1, -20, 190); move(p2, 1240, 190);
+    move(p1, -20, 190); move(p2, 1085, -40);
     $('grade').textContent = 'streak 0 / 5'; $('mode').textContent = 'warn'; $('cap').textContent = '17/40'; $('dens').textContent = 'loaded 17'; $('tri').textContent = 'before X, fail if Y';
     clear();
   }
@@ -323,8 +323,8 @@
       run() { flow('f3', false); flow('f4', true); move(p1, 990, 190); pk(p1, 'ok', false); state('n-warn', null); state('n-block', 'block'); $('mode').textContent = 'block'; print('<span class="p">$</span> na promote L001'); print('L001 is now <span class="b">block</span>'); } },
     { hold: 2000, label: 'The lesson leaves the pipeline. It costs one line to carry and cannot be skipped.',
       run() { flow('f4', false); move(p1, 1240, 190); later(() => show(p1, false), 900); print('L001 · enforced · one line in LESSONS.md'); } },
-    { hold: 2600, label: 'Later, the same mistake is attempted again, from Claude Code or from a terminal.',
-      run() { show(p2, true); move(p2, 1180, 190); print('<span class="p">$</span> git commit -m "wip"'); } },
+    { hold: 2600, label: 'Weeks later, a new commit tries the same mistake, from Claude Code or from a terminal. It drops straight onto the hook.',
+      run() { show(p2, true); move(p2, 1085, 190); print('<span class="p">$</span> git commit -m "wip"'); } },
     { hold: 3200, label: 'The hook denies it before it runs. Claude is told why and adjusts; a terminal sees the same refusal from git.',
       run() { pk(p2, 'block', true); print('<span class="b">L001 blocked</span>: boot failed · ReferenceError at index.html:12'); print('permissionDecision: <span class="b">deny</span>  ·  git: pre-commit hook exit 1'); } },
   ];
