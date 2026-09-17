@@ -304,7 +304,7 @@ reads each agent's payload and answers in that agent's shape.
 | Codex | `.codex/hooks.json` | context the model reads (Codex has no "ask") | denied |
 | Gemini CLI | `.gemini/settings.json` | a message on screen | denied |
 | Copilot | `.github/hooks/never-again.json` | a prompt | denied |
-| Antigravity | `.agents/hooks.json` | the git-side notice only | denied |
+| Antigravity | `.agents/hooks.json` | a prompt | denied |
 
 Things to know:
 
@@ -313,11 +313,11 @@ Things to know:
   change between releases.
 - **Copilot fails closed.** A hook that crashes blocks the tool call. The
   dispatcher always answers on that path, even when it has nothing to say.
-- **Antigravity wants an absolute path** in its hook file, so that file is
-  tied to one machine. Re-run the installer on each clone; it rewrites it.
-- **Warn mode cannot pause Gemini or Antigravity.** Neither has an "ask".
-  Only block mode stops a commit there when nobody is watching. The git-side
-  hook still records every fire.
+- **Antigravity reads its hook file at startup.** Restart it after the
+  installer, then ask it "which hooks are installed?" to confirm.
+- **Warn mode cannot pause Gemini.** It has no "ask". Only block mode stops
+  a commit there when nobody is watching. The git-side hook still records
+  every fire.
 
 Uninstall removes exactly these entries, files and blocks, and keeps anything
 else in those files.

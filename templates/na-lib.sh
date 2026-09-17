@@ -91,9 +91,10 @@ if not agent:
     else:
         agent = "claude"
 print("NA_CMD=%s" % shlex.quote(first(ti, ("command", "CommandLine", "cmd"))))
-print("NA_FILE=%s" % shlex.quote(first(ti, ("file_path", "path", "filePath", "TargetFile"))))
+print("NA_FILE=%s" % shlex.quote(first(ti, ("file_path", "path", "filePath", "AbsolutePath", "TargetFile"))))
 print("NA_TOOL_USE_ID=%s" % shlex.quote(first(d, ("tool_use_id", "toolCallId", "turn_id"))))
-print("NA_CWD=%s" % shlex.quote(first(d, ("cwd",))))
+# Antigravity puts the working directory inside the tool arguments.
+print("NA_CWD=%s" % shlex.quote(first(d, ("cwd",)) or first(ti, ("Cwd",))))
 print("NA_AGENT=%s" % shlex.quote(agent))
 ' "${NA_AGENT:-}" 2>/dev/null || printf 'NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""; NA_CWD=""; NA_AGENT=%s\n' "${NA_AGENT:-claude}"
 }

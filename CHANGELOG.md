@@ -2,6 +2,25 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.2.1] — 2026-09-17
+
+From the first Antigravity run on a real site: the git side fired, the
+dry run answered, Antigravity itself never called the hook.
+
+### Fixed
+
+- **Antigravity's answer shape** now follows the IDE's own docs:
+  `decision` (`allow`, `deny`, `ask`) with `reason`. The `allow_tool` and
+  `deny_reason` keys from the CLI write-ups are still sent alongside. A warn
+  is now a real prompt there, not a note on stderr.
+- **Antigravity's working directory** sits inside the tool arguments
+  (`toolCall.args.Cwd`); the dispatcher reads it there, so the repo is
+  found from any working directory.
+- **The hook entry is workspace-relative** (`bash .claude/hooks/na/dispatch
+  --agent antigravity`), as the IDE docs show, so `.agents/hooks.json` is no
+  longer tied to one machine and can be committed.
+- The installer tells you to restart Antigravity after registering.
+
 ## [1.2.0] — 2026-09-17
 
 Releases are frequent now, and every project moves by re-running the
