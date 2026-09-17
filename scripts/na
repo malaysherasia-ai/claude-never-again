@@ -11,7 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -842,16 +842,19 @@ AGENTS = {
                     "skills": ".agents/skills",
                     "tells": (".agents/hooks.json", ".agents/rules")},
 }
-# Every agent but Antigravity runs the command through a shell from the
-# session's working directory, and its docs prefer resolving from the git
-# root over a relative path. Antigravity's docs want an absolute path.
+# Codex, Gemini and Copilot run the command through a shell from the
+# session's working directory, and their docs prefer resolving from the git
+# root over a relative path. Antigravity's docs show a workspace-relative
+# path (./scripts/lint.sh), so its entry is relative and travels with git.
 GIT_ROOT_EXPR = "$(git rev-parse --show-toplevel)"
 
 
 def _agent_cmds(agent):
-    root = GIT_ROOT_EXPR if agent != "antigravity" else os.path.realpath(ROOT).replace("\\", "/")
-    disp = 'bash "%s/.claude/hooks/na/dispatch" --agent %s' % (root, agent)
-    after = 'bash "%s/.claude/hooks/na/_after.sh" --agent %s' % (root, agent)
+    if agent == "antigravity":
+        return ("bash .claude/hooks/na/dispatch --agent antigravity",
+                "bash .claude/hooks/na/_after.sh --agent antigravity")
+    disp = 'bash "%s/.claude/hooks/na/dispatch" --agent %s' % (GIT_ROOT_EXPR, agent)
+    after = 'bash "%s/.claude/hooks/na/_after.sh" --agent %s' % (GIT_ROOT_EXPR, agent)
     return disp, after
 
 
@@ -957,7 +960,7 @@ def register_agent(agent):
         _json_save(path, data)
         note = ""
         if agent == "antigravity":
-            note = " (absolute path, as Antigravity requires; re-run the installer on another machine)"
+            note = " (restart Antigravity, then ask it which hooks are installed)"
         if agent == "codex":
             note = " (Codex asks you to trust the hook once: /hooks in Codex)"
         return "%s: registered in %s%s" % (agent, spec["config"], note)

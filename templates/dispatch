@@ -143,12 +143,16 @@ elif agent == "gemini":
     if note or decision == "ask":
         out["systemMessage"] = note or reason
 elif agent == "antigravity":
-    # allow_tool/deny_reason, and no channel for a warn beyond stderr.
+    # The IDE reads decision/reason (allow, deny, ask); the CLI write-ups
+    # show allow_tool/deny_reason. Send both; each ignores the other.
+    out["decision"] = decision or "allow"
     out["allow_tool"] = decision != "deny"
+    if decision:
+        out["reason"] = reason
     if decision == "deny":
         out["deny_reason"] = reason
-    elif note or reason:
-        sys.stderr.write((note or reason) + "\n")
+    if note:
+        out["systemMessage"] = note
 if out:
     print(json.dumps(out))
 ' "$NA_AGENT"

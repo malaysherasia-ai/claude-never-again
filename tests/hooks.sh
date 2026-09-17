@@ -586,7 +586,7 @@ pay() {  # pay AGENT CMD -> that agent's PreToolUse payload
     codex)       printf '{"tool_name":"Bash","tool_input":{"command":%s},"turn_id":"t9","cwd":"%s"}' "$c" "$CWD" ;;
     gemini)      printf '{"tool_name":"run_shell_command","tool_input":{"command":%s},"cwd":"%s"}' "$c" "$CWD" ;;
     copilot)     printf '{"toolName":"bash","toolArgs":{"command":%s},"cwd":"%s"}' "$c" "$CWD" ;;
-    antigravity) printf '{"toolCall":{"name":"run_command","args":{"CommandLine":%s}},"cwd":"%s"}' "$c" "$CWD" ;;
+    antigravity) printf '{"toolCall":{"name":"run_command","args":{"CommandLine":%s,"Cwd":"%s"}},"conversationId":"c9"}' "$c" "$CWD" ;;
   esac
 }
 agent() { pay "$1" "$2" | NA_DRY_RUN="${3-1}" bash .claude/hooks/na/dispatch --agent "$1" 2>/dev/null; }
@@ -616,11 +616,12 @@ check "gemini warn: systemMessage only"    'echo "$O" | grep -q systemMessage &&
 O="$(agent copilot "git commit -m x")"
 check "copilot warn: top-level ask"        'echo "$O" | grep -q "^{\"permissionDecision\": \"ask\""'
 O="$(agent antigravity "git commit -m x")"
-check "antigravity warn: allow_tool true"  'echo "$O" | grep -q "\"allow_tool\": true"'
+check "antigravity warn: decision ask"     'echo "$O" | grep -q "\"decision\": \"ask\"" && echo "$O" | grep -q "\"allow_tool\": true"'
 check "agent guessed from the shape"       'pay codex "git commit -m x" | NA_DRY_RUN=1 bash .claude/hooks/na/dispatch | grep -q additionalContext'
 check "not a commit: silent for every agent" '[ -z "$(agent codex ls)$(agent gemini ls)$(agent copilot ls)$(agent antigravity ls)" ]'
 mkdir -p agsub
 check "root found from the payload cwd"    '(cd agsub && pay codex "git commit -m x" | NA_DRY_RUN=1 bash ../.claude/hooks/na/dispatch --agent codex | grep -q ag.txt)'
+check "root found from Antigravity's Cwd"  '(cd agsub && pay antigravity "git commit -m x" | NA_DRY_RUN=1 bash ../.claude/hooks/na/dispatch --agent antigravity | grep -q ag.txt)'
 rmdir agsub
 "$PYBIN" - <<'PY'
 import json, io
@@ -631,7 +632,7 @@ PY
 check "codex block: deny"                  'agent codex "git commit -m x" | grep -q "\"deny\""'
 check "gemini block: decision deny"        'agent gemini "git commit -m x" | grep -q "\"decision\": \"deny\""'
 check "copilot block: deny"                'agent copilot "git commit -m x" | grep -q "\"permissionDecision\": \"deny\""'
-check "antigravity block: allow_tool false" 'agent antigravity "git commit -m x" | grep -q "\"allow_tool\": false"'
+check "antigravity block: decision deny"   'agent antigravity "git commit -m x" | grep -q "\"decision\": \"deny\""'
 "$PYBIN" - <<'PY'
 import json, io
 p = '.claude/never-again/state.json'
@@ -657,7 +658,7 @@ check "codex: own entry kept"              'grep -q "echo mine" .codex/hooks.jso
 check "codex: after-hook registered"       'grep -q "_after.sh" .codex/hooks.json'
 check "gemini: BeforeTool + AfterTool"     'grep -q BeforeTool .gemini/settings.json && grep -q AfterTool .gemini/settings.json'
 check "copilot: own file"                  'grep -q preToolUse .github/hooks/never-again.json && grep -q '"'"'"version": 1'"'"' .github/hooks/never-again.json'
-check "antigravity: absolute path"         '"$PYBIN" -c "import json,os,sys; c=json.load(open(sys.argv[1]))[\"never-again\"][\"PreToolUse\"][0][\"hooks\"][0][\"command\"]; p=c.split(chr(34))[1]; sys.exit(0 if c.endswith(\"--agent antigravity\") and os.path.isabs(p) and os.path.isfile(p) else 1)" .agents/hooks.json'
+check "antigravity: relative entry"        'grep -q "\"bash .claude/hooks/na/dispatch --agent antigravity\"" .agents/hooks.json'
 check "agents remembered in state"         '"$PYBIN" -c "import json,sys; a=json.load(open(sys.argv[1]))[\"agents\"]; sys.exit(0 if a==[\"codex\",\"gemini\",\"copilot\",\"antigravity\"] else 1)" .claude/never-again/state.json'
 check "AGENTS.md has the block"            'grep -q "BEGIN never-again" AGENTS.md'
 check "GEMINI.md has the block"            'grep -q "BEGIN never-again" GEMINI.md'
