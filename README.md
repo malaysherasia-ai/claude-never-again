@@ -9,6 +9,9 @@ If it cannot, it writes one short line in a rules file. That is all.
 
 MIT licensed. Runs on your machine. No account, no tracking, no network calls.
 
+Built for Claude Code. Works the same with Codex, Gemini CLI, GitHub Copilot
+and Google Antigravity: see [Other agents](#other-agents).
+
 **macOS, Linux, WSL:** needs git, bash and Python 3.7 or newer.
 
 ```bash
@@ -256,6 +259,66 @@ replacing it.
 
 ---
 
+## Other agents
+
+never-again grew up on Claude Code, but the guard is not tied to it. The
+check runs from git's own pre-commit hook, and every agent that commits goes
+through git. So Codex, Gemini CLI, GitHub Copilot and Google Antigravity get
+the git-side guard the moment you run the installer. Nothing to set up.
+
+The second half, the prompt that stops an agent *before* it runs `git commit`,
+needs one entry in that agent's hook file. The installer writes it:
+
+```bash
+bash claude-never-again/install.sh --agent codex .
+```
+
+The names are `codex`, `gemini`, `copilot` and `antigravity`. Repeat the flag
+or join them with commas. An agent whose folder is already in the repo
+(`.codex/`, `.gemini/`, `.github/copilot-instructions.md`,
+`.agents/hooks.json`) is registered without the flag. The choice is kept in
+`state.json`, so a re-run and a fresh clone keep it.
+
+For each agent the installer does three things:
+
+- **Writes two entries** into the agent's hook file, one for the dispatcher
+  and one for the after-commit recorder. Merged, never replaced.
+- **Puts the same rules block** into the file that agent reads: `AGENTS.md`
+  for Codex and Antigravity, `GEMINI.md` for Gemini CLI,
+  `.github/copilot-instructions.md` for Copilot.
+- **Copies the skill** into that agent's skills folder (`.agents/skills`,
+  `.gemini/skills`, `.github/skills`), so "never again" means the same thing
+  at every keyboard.
+
+The hook scripts never change. They all speak one dialect. The dispatcher
+reads each agent's payload and answers in that agent's shape.
+
+| Agent | Hook file | Warn mode shows as | Block mode |
+|---|---|---|---|
+| Claude Code | `.claude/settings.json` | a prompt, plus a message | denied |
+| Codex | `.codex/hooks.json` | context the model reads (Codex has no "ask") | denied |
+| Gemini CLI | `.gemini/settings.json` | a message on screen | denied |
+| Copilot | `.github/hooks/never-again.json` | a prompt | denied |
+| Antigravity | `.agents/hooks.json` | the git-side notice only | denied |
+
+Things to know:
+
+- **Codex asks you to trust the hook once.** Run `/hooks` in Codex after the
+  installer. Trust is tied to the entry in the hook file, which does not
+  change between releases.
+- **Copilot fails closed.** A hook that crashes blocks the tool call. The
+  dispatcher always answers on that path, even when it has nothing to say.
+- **Antigravity wants an absolute path** in its hook file, so that file is
+  tied to one machine. Re-run the installer on each clone; it rewrites it.
+- **Warn mode cannot pause Gemini or Antigravity.** Neither has an "ask".
+  Only block mode stops a commit there when nobody is watching. The git-side
+  hook still records every fire.
+
+Uninstall removes exactly these entries, files and blocks, and keeps anything
+else in those files.
+
+---
+
 ## Two things every hook gets right for you
 
 Hooks all load one shared library, `.claude/hooks/na/na-lib.sh`, so the parts
@@ -297,6 +360,13 @@ CLAUDE.md                           one marked block added at the end; never ove
 .claude/hooks/na/_after.sh          records that a warned commit went ahead
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
 .claude/settings.json               two entries, dispatch and _after.sh; merged, never replaced
+AGENTS.md, GEMINI.md,
+  .github/copilot-instructions.md   the same block, only for the agents you registered
+.codex/hooks.json, .gemini/settings.json,
+  .agents/hooks.json,
+  .github/hooks/never-again.json    two entries each, only for the agents you registered
+.agents/skills/, .gemini/skills/,
+  .github/skills/                   the skill, copied for that agent
 .git/hooks/pre-commit               a short stub, only if you had none; pre-merge-commit likewise
 .claude/never-again/
   ├── na                            the stats command  (na.cmd for PowerShell)
@@ -329,8 +399,9 @@ rule, in the mode the team earned. The wiring does not travel. Git never
 clones its own hooks folder, and `.claude/settings.json` is yours; it often
 holds other tools and paths that only work on one machine, so we do not ask
 you to share it. After cloning, run the installer once. It registers every
-hook in `state.json` with Claude Code and installs the git stub. It is safe
-to run again, changes nothing that already matches, and takes a second.
+hook in `state.json` with Claude Code and with every other agent the repo
+uses, and installs the git stub. It is safe to run again, changes nothing
+that already matches, and takes a second.
 
 `install.sh` backs up `CLAUDE.md` before touching it and is safe to re-run.
 `LESSONS.md` and the hooks are meant to be committed. They are team knowledge.

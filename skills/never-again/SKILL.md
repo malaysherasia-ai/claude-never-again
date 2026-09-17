@@ -56,7 +56,9 @@ not boot." That is a hook. "Prefer clear names" is not.
 
 ### 3. If it is a hook
 
-Hooks live in `.claude/hooks/na/` and are registered in `.claude/settings.json`.
+Hooks live in `.claude/hooks/na/` and are registered in `.claude/settings.json`
+(and in the hook file of any other agent the installer was told about; the
+hooks themselves are the same).
 Commit-time hooks also run from git's own pre-commit hook, so they apply to
 commits made from any tool or terminal, not only Claude Code's Bash tool.
 

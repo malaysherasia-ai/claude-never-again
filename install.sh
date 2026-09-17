@@ -2,9 +2,14 @@
 # never-again installer — safe to run repeatedly.
 #
 #   bash install.sh [target-repo]              install or re-install
+#   bash install.sh --agent codex [target-repo] also register the hooks with
+#                                              another agent: codex, gemini,
+#                                              copilot or antigravity (repeatable)
 #   bash install.sh --uninstall [target-repo]   remove it again
 #
-# Both default to the current directory.
+# All default to the current directory. Agents whose folders are already in
+# the repo (.codex/, .gemini/, .github/copilot-instructions.md, .agents/) are
+# registered without being asked for.
 
 set -euo pipefail
 
@@ -33,12 +38,16 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # has `na`. One implementation, so install and uninstall cannot drift over
 # which files belong to never-again.
 UNINSTALL=0
+AGENT_FLAGS=()
 ARGS=()
-for a in "$@"; do
-  case "$a" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --uninstall) UNINSTALL=1 ;;
-    *) ARGS+=("$a") ;;
+    --agent) AGENT_FLAGS+=(--add "${2:-}"); shift ;;
+    --agent=*) AGENT_FLAGS+=(--add "${1#--agent=}") ;;
+    *) ARGS+=("$1") ;;
   esac
+  shift
 done
 set -- ${ARGS+"${ARGS[@]}"}
 
@@ -175,26 +184,37 @@ JSON
   echo "  state      state.json created (promotion by pull request; see docs/TEAMS.md)"
 fi
 
+# --- other agents ---------------------------------------------------------------
+# Codex, Gemini CLI, Copilot and Antigravity. Named with --agent, or found by
+# their folders. Remembered in state.json so a re-run keeps them.
+AGENTS="$(CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _agents --detect ${AGENT_FLAGS+"${AGENT_FLAGS[@]}"})" || exit 1
+AGENTS="${AGENTS//$'\r'/}"
+
 # --- settings.json ---------------------------------------------------------
 # Merged, never replaced. `na _register` adds the after-commit resolver and
 # the one dispatcher entry, and drops per-hook entries from earlier releases.
 # That is what a fresh clone needs, so settings.json never has to travel
-# through git, and filing a hook never touches settings at all.
+# through git, and filing a hook never touches settings at all. The other
+# agents' hook configs get their entry in the same call.
 CLAUDE_PROJECT_DIR="$DEST" "$PY" "$DEST/.claude/never-again/na" _register || true
 
-# --- CLAUDE.md --------------------------------------------------------------
+# --- CLAUDE.md, and the file each other agent reads rules from -------------
 # Merge, never clobber. The block is delimited so it can be replaced or removed.
-CLAUDE="$DEST/CLAUDE.md"
 BLOCK="$SRC/templates/CLAUDE-block.md"
 
-if [ ! -f "$CLAUDE" ]; then
-  { echo "# Project instructions"; echo; cat "$BLOCK"; } >"$CLAUDE"
-  echo "  claude.md  created with the never-again block"
-elif grep -q "<!-- BEGIN never-again -->" "$CLAUDE"; then
-  cp "$CLAUDE" "$CLAUDE.bak"
-  # Explicit UTF-8 throughout. Python's default on Windows is cp1252, which
-  # cannot decode every byte and crashed this step on ordinary non-English text.
-  "$PY" - "$CLAUDE" "$BLOCK" <<'PYEOF'
+# merge_block FILE LABEL [HEADING] — put the block in FILE: create it with
+# HEADING, replace an existing block in place, or append.
+merge_block() {
+  local file="$1" label="$2" heading="${3:-# Project instructions}"
+  if [ ! -f "$file" ]; then
+    mkdir -p "$(dirname "$file")"
+    { echo "$heading"; echo; cat "$BLOCK"; } >"$file"
+    echo "  $label created with the never-again block"
+  elif grep -q "<!-- BEGIN never-again -->" "$file"; then
+    cp "$file" "$file.bak"
+    # Explicit UTF-8 throughout. Python's default on Windows is cp1252, which
+    # cannot decode every byte and crashed this step on ordinary non-English text.
+    "$PY" - "$file" "$BLOCK" <<'PYEOF'
 import re, sys
 path, block = sys.argv[1], sys.argv[2]
 text = open(path, encoding="utf-8").read()
@@ -204,12 +224,40 @@ text = re.sub(
     lambda _m: new, text, flags=re.S)
 open(path, "w", encoding="utf-8", newline="\n").write(text)
 PYEOF
-  echo "  claude.md  existing block updated (backup at CLAUDE.md.bak)"
-else
-  cp "$CLAUDE" "$CLAUDE.bak"
-  { echo; cat "$BLOCK"; } >>"$CLAUDE"
-  echo "  claude.md  block appended (backup at CLAUDE.md.bak)"
-fi
+    echo "  $label existing block updated (backup at $(basename "$file").bak)"
+  else
+    cp "$file" "$file.bak"
+    { echo; cat "$BLOCK"; } >>"$file"
+    echo "  $label block appended (backup at $(basename "$file").bak)"
+  fi
+}
+
+merge_block "$DEST/CLAUDE.md" "claude.md "
+
+# Each other agent reads its own rules file and its own skills folder; the
+# same block and the same skill go there, so "never again" means the same
+# thing whichever agent is at the keyboard.
+DONE_RULES=" "; DONE_SKILLS=" "
+for agent in $AGENTS; do
+  case "$agent" in
+    codex)       rules="AGENTS.md";                       skills=".agents/skills" ;;
+    gemini)      rules="GEMINI.md";                       skills=".gemini/skills" ;;
+    copilot)     rules=".github/copilot-instructions.md"; skills=".github/skills" ;;
+    antigravity) rules="AGENTS.md";                       skills=".agents/skills" ;;
+    *) continue ;;
+  esac
+  case "$DONE_RULES" in *" $rules "*) ;; *)
+    DONE_RULES="$DONE_RULES$rules "
+    merge_block "$DEST/$rules" "$(printf '%-10s' "$agent")" ;;
+  esac
+  case "$DONE_SKILLS" in *" $skills "*) ;; *)
+    DONE_SKILLS="$DONE_SKILLS$skills "
+    mkdir -p "$DEST/$skills"
+    rm -rf "$DEST/$skills/never-again"
+    cp -R "$SRC/skills/never-again" "$DEST/$skills/"
+    echo "  $(printf '%-10s' "$agent") skill copied to $skills/never-again/" ;;
+  esac
+done
 
 # --- notes that predate the tool ----------------------------------------------
 # A CLAUDE.md full of rules, a NOTES.md, a docs/lessons.md: lessons the repo
@@ -272,9 +320,12 @@ Done. LESSONS.md and the hooks are meant to be committed — they are team
 knowledge. Only fires.log, the verified manifests and CLAUDE.md.bak stay local.
 A fresh clone runs this installer once: git does not clone its hooks folder.
 
-Next: fix a bug, then tell Claude "never again". If the repo already has
-notes (na import lists them), tell Claude "import the existing notes with the
+Next: fix a bug, then tell your agent "never again". If the repo already has
+notes (na import lists them), say "import the existing notes with the
 never-again skill" so they count from day one.
+
+Other agents: --agent codex|gemini|copilot|antigravity registers the same
+hooks with them (Codex asks you to trust the hook once: /hooks).
 
 Stats:  .claude/never-again/na          (PowerShell: .claude\never-again\na.cmd)
 Handy:  alias na=".claude/never-again/na"

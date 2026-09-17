@@ -574,6 +574,109 @@ check "vercel: quiet once ignored"         '! echo "$OUT9" | grep -q "serve /LES
 rm -f vercel.json .vercelignore
 
 echo
+echo "=== the same hooks under other agents ==="
+# Each agent hands the dispatcher its own payload shape and wants its own
+# answer shape back. The hook in between is the one from the template.
+CWD="$(pwd -W 2>/dev/null || pwd -P)"
+pay() {  # pay AGENT CMD -> that agent's PreToolUse payload
+  local c; c="$("$PYBIN" -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$2")"
+  case "$1" in
+    claude)      printf '{"tool_name":"Bash","tool_input":{"command":%s},"tool_use_id":"tu9","cwd":"%s"}' "$c" "$CWD" ;;
+    codex)       printf '{"tool_name":"Bash","tool_input":{"command":%s},"turn_id":"t9","cwd":"%s"}' "$c" "$CWD" ;;
+    gemini)      printf '{"tool_name":"run_shell_command","tool_input":{"command":%s},"cwd":"%s"}' "$c" "$CWD" ;;
+    copilot)     printf '{"toolName":"bash","toolArgs":{"command":%s},"cwd":"%s"}' "$c" "$CWD" ;;
+    antigravity) printf '{"toolCall":{"name":"run_command","args":{"CommandLine":%s}},"cwd":"%s"}' "$c" "$CWD" ;;
+  esac
+}
+agent() { pay "$1" "$2" | NA_DRY_RUN="${3-1}" bash .claude/hooks/na/dispatch --agent "$1" 2>/dev/null; }
+
+cp .claude/never-again/hook-template.sh .claude/hooks/na/L021.sh
+"$PYBIN" - <<'PY'
+import sys, io, json
+p = '.claude/hooks/na/L021.sh'
+s = io.open(p, encoding="utf-8").read()
+s = s.replace('ID="L000"', 'ID="L021"').replace('RULE="one-line rule text"', 'RULE="no TODO-BLOCK"')
+s = s.replace('DETAIL=""\n', 'DETAIL=""\nwhile IFS= read -r f; do [ -f "$NA_ROOT/$f" ] || continue; '
+              'if grep -q TODO-BLOCK "$NA_ROOT/$f"; then VIOLATION=1; DETAIL="$DETAIL $f"; fi; '
+              'done < <(na_changed_files .txt)\n', 1)
+io.open(p, "w", encoding="utf-8", newline="\n").write(s)
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8'))
+st['lessons']['L021'] = {"form": "hook", "mode": "warn", "hook": ".claude/hooks/na/L021.sh"}
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+echo TODO-BLOCK > ag.txt
+O="$(agent claude "git commit -m x")"
+check "claude: ask + systemMessage"        'echo "$O" | grep -q "\"ask\"" && echo "$O" | grep -q systemMessage'
+O="$(agent codex "git commit -m x")"
+check "codex warn: allow + additionalContext" 'echo "$O" | grep -q "\"allow\"" && echo "$O" | grep -q additionalContext && ! echo "$O" | grep -q "\"ask\""'
+O="$(agent gemini "git commit -m x")"
+check "gemini warn: systemMessage only"    'echo "$O" | grep -q systemMessage && ! echo "$O" | grep -q decision'
+O="$(agent copilot "git commit -m x")"
+check "copilot warn: top-level ask"        'echo "$O" | grep -q "^{\"permissionDecision\": \"ask\""'
+O="$(agent antigravity "git commit -m x")"
+check "antigravity warn: allow_tool true"  'echo "$O" | grep -q "\"allow_tool\": true"'
+check "agent guessed from the shape"       'pay codex "git commit -m x" | NA_DRY_RUN=1 bash .claude/hooks/na/dispatch | grep -q additionalContext'
+check "not a commit: silent for every agent" '[ -z "$(agent codex ls)$(agent gemini ls)$(agent copilot ls)$(agent antigravity ls)" ]'
+mkdir -p agsub
+check "root found from the payload cwd"    '(cd agsub && pay codex "git commit -m x" | NA_DRY_RUN=1 bash ../.claude/hooks/na/dispatch --agent codex | grep -q ag.txt)'
+rmdir agsub
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['lessons']['L021']['mode'] = 'block'
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+check "codex block: deny"                  'agent codex "git commit -m x" | grep -q "\"deny\""'
+check "gemini block: decision deny"        'agent gemini "git commit -m x" | grep -q "\"decision\": \"deny\""'
+check "copilot block: deny"                'agent copilot "git commit -m x" | grep -q "\"permissionDecision\": \"deny\""'
+check "antigravity block: allow_tool false" 'agent antigravity "git commit -m x" | grep -q "\"allow_tool\": false"'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['lessons']['L021']['mode'] = 'warn'
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+: > "$LOG"
+agent codex "git commit -m x" "" >/dev/null
+check "fire logged with the agent as source" '[ "$(col 4)" = codex ] && [ "$(col 5)" = pending ]'
+pay codex "ls" | bash .claude/hooks/na/_after.sh --agent codex
+check "after a non-commit: still pending"  '[ "$(col 5)" = pending ]'
+pay codex "git commit -m x" | bash .claude/hooks/na/_after.sh --agent codex
+check "after the commit: proceeded"        '[ "$(col 5)" = proceeded ]'
+rm -f ag.txt
+
+echo
+echo "=== registering with other agents ==="
+mkdir -p .codex
+printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo mine"}]}]}}\n' > .codex/hooks.json
+OUTA="$(bash "$SRC/install.sh" --agent gemini,copilot --agent antigravity . 2>&1)"
+check "codex found by its folder"          'echo "$OUTA" | grep -q "codex: registered"'
+check "codex: own entry kept"              'grep -q "echo mine" .codex/hooks.json && grep -q "dispatch" .codex/hooks.json'
+check "codex: after-hook registered"       'grep -q "_after.sh" .codex/hooks.json'
+check "gemini: BeforeTool + AfterTool"     'grep -q BeforeTool .gemini/settings.json && grep -q AfterTool .gemini/settings.json'
+check "copilot: own file"                  'grep -q preToolUse .github/hooks/never-again.json && grep -q '"'"'"version": 1'"'"' .github/hooks/never-again.json'
+check "antigravity: absolute path"         'grep -q "\"bash \\\\\"$CWD/.claude/hooks/na/dispatch\\\\\" --agent antigravity\"" .agents/hooks.json'
+check "agents remembered in state"         '"$PYBIN" -c "import json,sys; a=json.load(open(sys.argv[1]))[\"agents\"]; sys.exit(0 if a==[\"codex\",\"gemini\",\"copilot\",\"antigravity\"] else 1)" .claude/never-again/state.json'
+check "AGENTS.md has the block"            'grep -q "BEGIN never-again" AGENTS.md'
+check "GEMINI.md has the block"            'grep -q "BEGIN never-again" GEMINI.md'
+check "copilot-instructions has the block" 'grep -q "BEGIN never-again" .github/copilot-instructions.md'
+check "skill copied for each agent"        '[ -f .agents/skills/never-again/SKILL.md ] && [ -f .gemini/skills/never-again/SKILL.md ] && [ -f .github/skills/never-again/SKILL.md ]'
+check "block-only files are not notes"     '! echo "$OUTA" | grep -q "AGENTS.md"'
+OUTB="$(bash "$SRC/install.sh" . 2>&1)"
+check "re-run keeps the agents"            '[ "$(echo "$OUTB" | grep -c "already registered in")" -eq 4 ]'
+check "re-run registers once"              '[ "$(grep -c dispatch .codex/hooks.json)" -eq 1 ] && [ "$(grep -c dispatch .gemini/settings.json)" -eq 1 ]'
+check "backups are ignored"                'git check-ignore -q AGENTS.md.bak && git check-ignore -q .github/copilot-instructions.md.bak'
+check "unknown agent refused"              '! bash "$SRC/install.sh" --agent cursor . >/dev/null 2>&1'
+rm -f .claude/hooks/na/L021.sh
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); del st['lessons']['L021']
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+
+echo
 echo "  ---------------------------------"
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
