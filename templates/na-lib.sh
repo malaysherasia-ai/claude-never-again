@@ -49,6 +49,65 @@ na_native_path() {
 # na_env — the environment every hook needs: NA_ROOT, NA_STATE, NA_CLI,
 # NA_SOURCE and NA_PY. Returns 1 when no interpreter runs. na_begin calls
 # this; a hook that runs without a payload (a manual --run) calls it directly.
+# na_payload_vars PAYLOAD — the fields every runner's payload carries, as
+# shell assignments to eval: NA_CMD, NA_FILE, NA_TOOL_USE_ID, NA_CWD and
+# NA_AGENT. Claude Code, Codex, Gemini CLI, Copilot and Antigravity all hand a
+# hook one JSON object on stdin; only the field names differ. This is the one
+# place that knows them. NA_AGENT is kept when already set (the registered
+# entry passes --agent) and guessed from the shape otherwise.
+na_payload_vars() {
+  printf '%s' "$1" | "${NA_PY:-python3}" -c '
+import json, sys, shlex
+agent = sys.argv[1]
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+if not isinstance(d, dict):
+    d = {}
+ti = d.get("tool_input")
+if not isinstance(ti, dict):
+    ti = d.get("toolArgs")
+if not isinstance(ti, dict):
+    tc = d.get("toolCall")
+    ti = tc.get("args") if isinstance(tc, dict) else None
+if not isinstance(ti, dict):
+    ti = {}
+def first(m, keys):
+    for k in keys:
+        v = m.get(k)
+        if isinstance(v, str) and v:
+            return v
+    return ""
+if not agent:
+    if "toolCall" in d:
+        agent = "antigravity"
+    elif "toolName" in d or "toolArgs" in d:
+        agent = "copilot"
+    elif d.get("tool_name") == "run_shell_command":
+        agent = "gemini"
+    elif "turn_id" in d and "tool_use_id" not in d:
+        agent = "codex"
+    else:
+        agent = "claude"
+print("NA_CMD=%s" % shlex.quote(first(ti, ("command", "CommandLine", "cmd"))))
+print("NA_FILE=%s" % shlex.quote(first(ti, ("file_path", "path", "filePath", "TargetFile"))))
+print("NA_TOOL_USE_ID=%s" % shlex.quote(first(d, ("tool_use_id", "toolCallId", "turn_id"))))
+print("NA_CWD=%s" % shlex.quote(first(d, ("cwd",))))
+print("NA_AGENT=%s" % shlex.quote(agent))
+' "${NA_AGENT:-}" 2>/dev/null || printf 'NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""; NA_CWD=""; NA_AGENT=%s\n' "${NA_AGENT:-claude}"
+}
+
+# na_root_from CWD — only Claude Code sets CLAUDE_PROJECT_DIR. Every other
+# runner says where it is in the payload; the repo is that directory's git
+# top level. Sets the variable the rest of the code already reads.
+na_root_from() {
+  [ -n "${CLAUDE_PROJECT_DIR:-}" ] && return 0
+  [ -n "$1" ] && [ -d "$1" ] || return 0
+  CLAUDE_PROJECT_DIR="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$1")"
+  export CLAUDE_PROJECT_DIR
+}
+
 na_env() {
   NA_ROOT="$(na_native_path "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}")"
   NA_STATE="$NA_ROOT/.claude/never-again/state.json"
@@ -88,17 +147,7 @@ na_begin() {
   NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""
   if [ "$NA_SOURCE" = "claude" ]; then
     NA_PAYLOAD="$(cat)"
-    eval "$(printf '%s' "$NA_PAYLOAD" | "$NA_PY" -c '
-import json, sys, shlex
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    d = {}
-ti = d.get("tool_input") or {}
-print("NA_CMD=%s" % shlex.quote(str(ti.get("command", ""))))
-print("NA_FILE=%s" % shlex.quote(str(ti.get("file_path", ""))))
-print("NA_TOOL_USE_ID=%s" % shlex.quote(str(d.get("tool_use_id", ""))))
-' 2>/dev/null || true)"
+    eval "$(na_payload_vars "$NA_PAYLOAD")"
     # The `if` filter in settings.json is the first gate, but it has been seen
     # to let unrelated commands through. Decide from the command text too, and
     # do it properly: a commit is a `git ... commit` segment, not the substring.
@@ -233,7 +282,7 @@ na_fire() {
   fi
 
   if [ -z "${NA_DRY_RUN:-}" ] && [ -f "$NA_CLI" ]; then
-    "$NA_PY" "$NA_CLI" _fired "$NA_ID" "$mode" claude "$NA_TOOL_USE_ID" >/dev/null 2>&1
+    "$NA_PY" "$NA_CLI" _fired "$NA_ID" "$mode" "${NA_AGENT:-claude}" "$NA_TOOL_USE_ID" >/dev/null 2>&1
   fi
 
   # In warn mode the prompt goes to the person. Under auto mode the harness

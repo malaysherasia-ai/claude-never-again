@@ -1,18 +1,35 @@
 #!/usr/bin/env bash
 # never-again dispatcher. Installed as .claude/hooks/na/dispatch. One entry in
-# settings.json points here (PreToolUse, matcher Bash), and git's pre-commit
-# runner calls it with NA_EVENT=git. It does once what every hook used to do
-# for itself: read the payload, find an interpreter, decide whether this is a
-# commit, list the changed files, read every hook's mode. Then it runs only
-# the hooks whose trigger and watched extensions match, and merges their
-# answers into one decision. Ten hooks cost one setup, not ten.
+# the agent's hook config points here (Claude Code's settings.json by default;
+# `--agent codex|gemini|copilot|antigravity` for the others), and git's
+# pre-commit runner calls it with NA_EVENT=git. It does once what every hook
+# used to do for itself: read the payload, find an interpreter, decide whether
+# this is a commit, list the changed files, read every hook's mode. Then it
+# runs only the hooks whose trigger and watched extensions match, and merges
+# their answers into one decision in the shape the calling agent expects.
+# Ten hooks cost one setup, not ten.
 #
 # The index it runs from is `na _index`: one line per live hook with its
 # mode, trigger and WATCH list, read from state.json and the scripts.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
 
-if ! na_env; then
+NA_AGENT="${NA_AGENT:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --agent) NA_AGENT="${2:-}"; shift ;;
+    --agent=*) NA_AGENT="${1#--agent=}" ;;
+  esac
+  shift
+done
+export NA_AGENT
+
+# The payload first: it carries the working directory, which is how a runner
+# without CLAUDE_PROJECT_DIR (every agent but Claude Code) finds the repo.
+NA_PAYLOAD=""
+[ "${NA_EVENT:-}" = "git" ] || NA_PAYLOAD="$(cat)"
+
+if ! NA_PY="$(NA_PYTHON="${NA_PY:-${NA_PYTHON:-}}" na_python)"; then
   if [ "${NA_EVENT:-}" = "git" ]; then
     echo "never-again: no working python found; no hook ran. Install Python 3.7+ or set NA_PYTHON." >&2
   else
@@ -20,24 +37,14 @@ if ! na_env; then
   fi
   exit 0
 fi
-export NA_PY NA_DISPATCHED=1
 
-NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""
-if [ "$NA_SOURCE" = "claude" ]; then
-  NA_PAYLOAD="$(cat)"
-  eval "$(printf '%s' "$NA_PAYLOAD" | "$NA_PY" -c '
-import json, sys, shlex
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    d = {}
-ti = d.get("tool_input") or {}
-print("NA_CMD=%s" % shlex.quote(str(ti.get("command", ""))))
-print("NA_FILE=%s" % shlex.quote(str(ti.get("file_path", ""))))
-print("NA_TOOL_USE_ID=%s" % shlex.quote(str(d.get("tool_use_id", ""))))
-' 2>/dev/null || true)"
+NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""; NA_CWD=""
+if [ "${NA_EVENT:-}" != "git" ]; then
+  eval "$(na_payload_vars "$NA_PAYLOAD")"
+  na_root_from "$NA_CWD"
 fi
-export NA_CMD NA_FILE NA_TOOL_USE_ID
+na_env
+export NA_PY NA_DISPATCHED=1 NA_CMD NA_FILE NA_TOOL_USE_ID NA_AGENT
 
 IS_COMMIT=0
 if [ "$NA_SOURCE" = "git" ] || na_is_commit "$NA_CMD"; then IS_COMMIT=1; fi
@@ -82,9 +89,11 @@ done <<<"$INDEX"
 [ "$NA_SOURCE" = "git" ] && exit "$RC"
 [ -z "$OUTS" ] && exit 0
 
-# Merge: deny beats ask; reasons are joined; system messages are joined.
+# Merge: deny beats ask; reasons are joined; system messages are joined. The
+# hooks always speak Claude Code's dialect; the last step translates it.
 printf '%s' "$OUTS" | "$NA_PY" -c '
 import json, sys
+agent = sys.argv[1] or "claude"
 decision, reasons, notes = None, [], []
 for line in sys.stdin.read().splitlines():
     line = line.strip()
@@ -103,14 +112,44 @@ for line in sys.stdin.read().splitlines():
         reasons.append(h["permissionDecisionReason"])
     if d.get("systemMessage"):
         notes.append(d["systemMessage"])
+reason, note = " | ".join(reasons), " | ".join(notes)
 out = {}
-if decision:
-    out["hookSpecificOutput"] = {"hookEventName": "PreToolUse",
-                                "permissionDecision": decision,
-                                "permissionDecisionReason": " | ".join(reasons)}
-if notes:
-    out["systemMessage"] = " | ".join(notes)
+if agent in ("claude", "codex"):
+    # Codex copies Claude Code'"'"'s shape but parses "ask" without acting on
+    # it, so a warn there is an allow with the reason in front of the model.
+    if decision == "ask" and agent == "codex":
+        out["hookSpecificOutput"] = {"hookEventName": "PreToolUse",
+                                    "permissionDecision": "allow",
+                                    "additionalContext": reason}
+    elif decision:
+        out["hookSpecificOutput"] = {"hookEventName": "PreToolUse",
+                                    "permissionDecision": decision,
+                                    "permissionDecisionReason": reason}
+    if note:
+        out["systemMessage"] = note
+elif agent == "copilot":
+    # Top-level decision, no message channel: the note rides in the reason.
+    if decision:
+        out["permissionDecision"] = decision
+        out["permissionDecisionReason"] = reason
+    elif note:
+        out["permissionDecision"] = "allow"
+        out["permissionDecisionReason"] = note
+elif agent == "gemini":
+    # Only deny exists; a warn is a systemMessage the person sees.
+    if decision == "deny":
+        out["decision"] = "deny"
+        out["reason"] = reason
+    if note or decision == "ask":
+        out["systemMessage"] = note or reason
+elif agent == "antigravity":
+    # allow_tool/deny_reason, and no channel for a warn beyond stderr.
+    out["allow_tool"] = decision != "deny"
+    if decision == "deny":
+        out["deny_reason"] = reason
+    elif note or reason:
+        sys.stderr.write((note or reason) + "\n")
 if out:
     print(json.dumps(out))
-'
+' "$NA_AGENT"
 exit 0

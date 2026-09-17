@@ -2,6 +2,44 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.1.0] — 2026-09-17
+
+The same hooks under Codex, Gemini CLI, GitHub Copilot and Google
+Antigravity. Prompted by an Antigravity session that said it could not run
+the hooks and would rebuild them in its own framework; it did not have to.
+
+### Added
+
+- **`--agent codex|gemini|copilot|antigravity`** on the installer. It writes
+  the dispatcher and after-commit entries into that agent's hook file,
+  merged and never replaced; puts the rules block into the file that agent
+  reads (`AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`); and
+  copies the skill into its skills folder. Agents whose folders are already
+  in the repo are registered without the flag. The choice is kept in
+  `state.json` under `agents`, so a re-run and a clone keep it.
+- **The dispatcher and `_after.sh` take `--agent NAME`.** They read all five
+  payload shapes, find the repo from the payload's `cwd` when
+  `CLAUDE_PROJECT_DIR` is not set, and answer in the caller's dialect: Codex
+  gets `additionalContext` for a warn since it has no "ask"; Gemini gets a
+  `systemMessage`; Copilot gets a top-level `permissionDecision`;
+  Antigravity gets `allow_tool` and `deny_reason`. Without the flag the
+  agent is guessed from the payload.
+- **`na _agents`** (internal): the remembered agents, `--add` and `--detect`.
+- **`fires.log` records the agent** in the source column: `codex`, `gemini`,
+  `copilot`, `antigravity`, alongside `claude` and `git`.
+- Uninstall removes the entries, the block and the skill copy for every
+  agent, and keeps whatever else those files hold.
+- 40 more test assertions, run on all three platforms.
+
+### Changed
+
+- The local-only `.gitignore` block also lists the backups of the other
+  rules files. An older block is upgraded in place, as before.
+- `na import` no longer lists a file that holds nothing but our own block,
+  whichever file it is.
+- The hook scripts are unchanged. The fire log columns, `state.json` fields
+  and hook stub are as frozen at 1.0.
+
 ## [1.0.1] — 2026-09-16
 
 From the first field report: a client site, two days, two false fires, one

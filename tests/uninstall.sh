@@ -71,8 +71,14 @@ node_modules/
 *.log
 EOF
 
+# Another agent's config with an entry of its own, and its rules file with
+# a section of its own. Both must survive too.
+mkdir -p .codex
+printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo mine"}]}]}}\n' > .codex/hooks.json
+printf '# Agent notes\n\nKeep this line.\n' > AGENTS.md
+
 echo "=== install ==="
-bash "$SRC/install.sh" . >/dev/null 2>&1 || { echo "install failed"; exit 1; }
+bash "$SRC/install.sh" --agent copilot . >/dev/null 2>&1 || { echo "install failed"; exit 1; }
 
 # The skill registers hooks after install; simulate that.
 mkdir -p .claude/hooks/na
@@ -93,6 +99,10 @@ check "installed: CLAUDE.md block"  'grep -q "BEGIN never-again" CLAUDE.md'
 check "installed: gitignore block"  'grep -q "never-again/fires.log" .gitignore'
 check "installed: git stub"         'grep -q "never-again" .git/hooks/pre-commit'
 check "installed: resolver entry"   'grep -q "_after.sh" .claude/settings.json'
+check "installed: codex entries"    'grep -q dispatch .codex/hooks.json'
+check "installed: copilot file"     '[ -f .github/hooks/never-again.json ]'
+check "installed: AGENTS.md block"  'grep -q "BEGIN never-again" AGENTS.md'
+check "installed: agent skills"     '[ -f .agents/skills/never-again/SKILL.md ] && [ -f .github/skills/never-again/SKILL.md ]'
 
 echo
 echo "=== uninstall refuses without confirmation (non-tty) ==="
@@ -112,6 +122,8 @@ check "hooks/na gone"               '[ ! -d .claude/hooks/na ]'
 check "never-again dir gone"        '[ ! -d .claude/never-again ]'
 check "git stub gone"               '[ ! -f .git/hooks/pre-commit ]'
 check "merge stub gone"             '[ ! -f .git/hooks/pre-merge-commit ]'
+check "copilot file gone"           '[ ! -f .github/hooks/never-again.json ] && [ ! -d .github/hooks ]'
+check "agent skills gone"           '[ ! -d .agents/skills/never-again ] && [ ! -d .github/skills ]'
 
 echo
 echo "=== kept what it does not own ==="
@@ -122,6 +134,9 @@ check "CLAUDE.md house style kept"  'grep -q "must survive an uninstall" CLAUDE.
 check "CLAUDE.md block stripped"    '! grep -q "never-again" CLAUDE.md'
 check "gitignore user lines kept"   'grep -q "node_modules/" .gitignore'
 check "gitignore block stripped"    '! grep -q "never-again" .gitignore && ! grep -q "CLAUDE.md.bak" .gitignore'
+check "codex own entry kept"        'grep -q "echo mine" .codex/hooks.json && ! grep -q "hooks/na" .codex/hooks.json'
+check "AGENTS.md own text kept"     'grep -q "Keep this line" AGENTS.md && ! grep -q "never-again" AGENTS.md'
+check "copilot-instructions block stripped" '! grep -q "never-again" .github/copilot-instructions.md'
 
 echo
 echo "=== settings.json merged, not replaced ==="
