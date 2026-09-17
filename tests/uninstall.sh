@@ -96,7 +96,7 @@ echo "user's own lesson" >> LESSONS.md
 check "installed: skill dir"        '[ -d .claude/skills/never-again ]'
 check "installed: na"               '[ -f .claude/never-again/na ]'
 check "installed: CLAUDE.md block"  'grep -q "BEGIN never-again" CLAUDE.md'
-check "installed: gitignore block"  'grep -q "never-again/fires.log" .gitignore'
+check "installed: gitignore block"  'grep -q "never-again/fires.log" .gitignore && grep -q "never-again/calls.log" .gitignore'
 check "installed: git stub"         'grep -q "never-again" .git/hooks/pre-commit'
 check "installed: resolver entry"   'grep -q "_after.sh" .claude/settings.json'
 check "installed: codex entries"    'grep -q dispatch .codex/hooks.json'

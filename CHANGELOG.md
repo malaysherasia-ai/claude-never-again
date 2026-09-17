@@ -2,6 +2,28 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.2.2] — 2026-09-17
+
+From the second Antigravity run: the 1.2.1 installer left the old entry in
+place, and the hook still never ran.
+
+### Fixed
+
+- **An entry of ours that an older release wrote is now rewritten** when
+  its command differs, for every agent. Before, "already registered" meant
+  "left as it was".
+- **Windows entries name Git's `bash.exe` by its full path.** A process an
+  agent spawns on Windows has WSL's bash on PATH or none at all, so a bare
+  `bash` ran nothing. Copilot's file carries both a bash and a powershell
+  form, since it has a field for each.
+
+### Added
+
+- **`.claude/never-again/calls.log`**: one line per commit the dispatcher
+  saw, with the agent's name and whether anything fired. Local and
+  gitignored. It answers the question the field reports could not: did the
+  agent call the hook at all?
+
 ## [1.2.1] — 2026-09-17
 
 From the first Antigravity run on a real site: the git side fired, the

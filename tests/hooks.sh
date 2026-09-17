@@ -642,6 +642,9 @@ PY
 : > "$LOG"
 agent codex "git commit -m x" "" >/dev/null
 check "fire logged with the agent as source" '[ "$(col 4)" = codex ] && [ "$(col 5)" = pending ]'
+ccol() { awk -F'\t' -v n="$1" 'END{print $n}' .claude/never-again/calls.log; }
+check "the call itself is logged"          '[ "$(ccol 2)" = codex ] && [ "$(ccol 3)" = claude ] && [ "$(ccol 4)" = fired ]'
+check "calls.log is ignored"               'git check-ignore -q .claude/never-again/calls.log'
 pay codex "ls" | bash .claude/hooks/na/_after.sh --agent codex
 check "after a non-commit: still pending"  '[ "$(col 5)" = pending ]'
 pay codex "git commit -m x" | bash .claude/hooks/na/_after.sh --agent codex
@@ -658,7 +661,25 @@ check "codex: own entry kept"              'grep -q "echo mine" .codex/hooks.jso
 check "codex: after-hook registered"       'grep -q "_after.sh" .codex/hooks.json'
 check "gemini: BeforeTool + AfterTool"     'grep -q BeforeTool .gemini/settings.json && grep -q AfterTool .gemini/settings.json'
 check "copilot: own file"                  'grep -q preToolUse .github/hooks/never-again.json && grep -q '"'"'"version": 1'"'"' .github/hooks/never-again.json'
-check "antigravity: relative entry"        'grep -q "\"bash .claude/hooks/na/dispatch --agent antigravity\"" .agents/hooks.json'
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    check "antigravity: Git's bash by path"   'grep -q "Git/bin/bash.exe" .agents/hooks.json && grep -q "dispatch --agent antigravity" .agents/hooks.json && ! grep -q "\"bash .claude" .agents/hooks.json' ;;
+  *)
+    check "antigravity: relative entry"        'grep -q "\"bash .claude/hooks/na/dispatch --agent antigravity\"" .agents/hooks.json' ;;
+esac
+check "copilot: bash and powershell forms" 'grep -q "\"bash\": \"bash " .github/hooks/never-again.json && grep -q "\"powershell\": \"& " .github/hooks/never-again.json'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.codex/hooks.json'
+d = json.load(io.open(p, encoding='utf-8'))
+for g in d['hooks']['PreToolUse']:
+    for h in g['hooks']:
+        if 'hooks/na/' in h['command']:
+            h['command'] = 'bash "/old/absolute/.claude/hooks/na/dispatch" --agent codex'
+json.dump(d, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+OUTC="$(bash "$SRC/install.sh" . 2>&1)"
+check "a stale entry is rewritten"         'echo "$OUTC" | grep -q "codex: registered" && ! grep -q "/old/absolute/" .codex/hooks.json && [ "$(grep -c "na/dispatch" .codex/hooks.json)" -eq 1 ]'
 check "agents remembered in state"         '"$PYBIN" -c "import json,sys; a=json.load(open(sys.argv[1]))[\"agents\"]; sys.exit(0 if a==[\"codex\",\"gemini\",\"copilot\",\"antigravity\"] else 1)" .claude/never-again/state.json'
 check "AGENTS.md has the block"            'grep -q "BEGIN never-again" AGENTS.md'
 check "GEMINI.md has the block"            'grep -q "BEGIN never-again" GEMINI.md'

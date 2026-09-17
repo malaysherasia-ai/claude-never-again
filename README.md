@@ -315,6 +315,13 @@ Things to know:
   dispatcher always answers on that path, even when it has nothing to say.
 - **Antigravity reads its hook file at startup.** Restart it after the
   installer, then ask it "which hooks are installed?" to confirm.
+- **On Windows the entry names Git's `bash.exe` by its full path.** A
+  process an agent spawns has WSL's bash on PATH, or none; never Git's. The
+  script path is relative to the repo, which is where these agents run.
+- **Did the agent call the hook at all?** `.claude/never-again/calls.log`
+  gets one line per commit the dispatcher saw, with the agent's name and
+  whether anything fired. Local, gitignored. If a commit went through and
+  no line appeared, the agent never ran the entry.
 - **Warn mode cannot pause Gemini.** It has no "ask". Only block mode stops
   a commit there when nobody is watching. The git-side hook still records
   every fire.
@@ -378,7 +385,8 @@ AGENTS.md, GEMINI.md,
   ├── state.json                    lesson index, hook modes
   ├── archive/L###.md               the full story, read only when asked
   ├── verified/                     one record per verify hook; local, gitignored
-  └── fires.log                     every fire, its outcome and grade; local, gitignored
+  ├── fires.log                     every fire, its outcome and grade; local, gitignored
+  └── calls.log                     one line per commit the dispatcher saw; local, gitignored
 ```
 
 **Already have notes?** Most repos do: a `CLAUDE.md` full of rules, a
