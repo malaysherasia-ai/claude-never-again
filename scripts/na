@@ -846,7 +846,7 @@ GIT_ROOT_EXPR = "$(git rev-parse --show-toplevel)"
 
 
 def _agent_cmds(agent):
-    root = GIT_ROOT_EXPR if agent != "antigravity" else ROOT.replace("\\", "/")
+    root = GIT_ROOT_EXPR if agent != "antigravity" else os.path.realpath(ROOT).replace("\\", "/")
     disp = 'bash "%s/.claude/hooks/na/dispatch" --agent %s' % (root, agent)
     after = 'bash "%s/.claude/hooks/na/_after.sh" --agent %s' % (root, agent)
     return disp, after

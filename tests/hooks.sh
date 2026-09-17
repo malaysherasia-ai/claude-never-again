@@ -656,7 +656,7 @@ check "codex: own entry kept"              'grep -q "echo mine" .codex/hooks.jso
 check "codex: after-hook registered"       'grep -q "_after.sh" .codex/hooks.json'
 check "gemini: BeforeTool + AfterTool"     'grep -q BeforeTool .gemini/settings.json && grep -q AfterTool .gemini/settings.json'
 check "copilot: own file"                  'grep -q preToolUse .github/hooks/never-again.json && grep -q '"'"'"version": 1'"'"' .github/hooks/never-again.json'
-check "antigravity: absolute path"         'grep -q "\"bash \\\\\"$CWD/.claude/hooks/na/dispatch\\\\\" --agent antigravity\"" .agents/hooks.json'
+check "antigravity: absolute path"         '"$PYBIN" -c "import json,os,sys; c=json.load(open(sys.argv[1]))[\"never-again\"][\"PreToolUse\"][0][\"hooks\"][0][\"command\"]; p=c.split(chr(34))[1]; sys.exit(0 if c.endswith(\"--agent antigravity\") and os.path.isabs(p) and os.path.isfile(p) else 1)" .agents/hooks.json'
 check "agents remembered in state"         '"$PYBIN" -c "import json,sys; a=json.load(open(sys.argv[1]))[\"agents\"]; sys.exit(0 if a==[\"codex\",\"gemini\",\"copilot\",\"antigravity\"] else 1)" .claude/never-again/state.json'
 check "AGENTS.md has the block"            'grep -q "BEGIN never-again" AGENTS.md'
 check "GEMINI.md has the block"            'grep -q "BEGIN never-again" GEMINI.md'
