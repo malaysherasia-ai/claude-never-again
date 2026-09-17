@@ -2,6 +2,28 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.3.0] — 2026-09-17
+
+Releases are frequent now, and a repo that nobody upgrades stays on the
+release it was installed with. This makes the newer one visible.
+
+### Added
+
+- **A once-a-day release check, after a commit.** The after-commit hook
+  asks GitHub for the newest release, at most once a day, never on the
+  commit path, and caches the answer in `.claude/never-again/.update-check`
+  (local, gitignored). The next commit's dispatcher and `na` itself then say
+  one line: *never-again 1.4.0 is out: na upgrade*. Nothing is installed
+  for you. `"updates": "off"` in `state.json` stops the check; new installs
+  get `"updates": "check"`.
+- `na _check-update [--cached]` (internal) does the check; `NA_UPDATE_URL`
+  points it elsewhere, which is how the tests cover it without GitHub.
+
+### Changed
+
+- The README says what the tool sends and when: two requests to GitHub,
+  both about releases, one of them daily and switchable off.
+
 ## [1.2.2] — 2026-09-17
 
 From the second Antigravity run: the 1.2.1 installer left the old entry in

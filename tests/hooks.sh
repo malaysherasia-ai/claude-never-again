@@ -700,6 +700,58 @@ json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
 PY
 
 echo
+echo "=== a newer release is noticed once a day, named on the next commit ==="
+CACHE=.claude/never-again/.update-check
+rm -f "$CACHE"
+printf '{"tag_name":"v9.9.9"}' > "$TMPDIR_ROOT/na-release.json"
+RELURL="file:///$(cd "$TMPDIR_ROOT" && { pwd -W 2>/dev/null || pwd -P; } | sed 's,^/,,')/na-release.json"
+check "nothing cached: --cached says nothing" '[ -z "$("$PYBIN" $NA _check-update --cached)" ] && [ ! -f "$CACHE" ]'
+check "the check fetches and names 9.9.9"    '[ "$(NA_UPDATE_URL="$RELURL" "$PYBIN" $NA _check-update)" = "9.9.9" ] && [ -f "$CACHE" ]'
+check "within a day: cached, no fetch"       '[ "$(NA_UPDATE_URL="file:///nowhere/x.json" "$PYBIN" $NA _check-update)" = "9.9.9" ]'
+check "na stats names it"                    '"$PYBIN" $NA | grep -q "9.9.9 is out"'
+echo TODO-BLOCK > u.txt
+OUTN="$(pay claude "git commit -m x" | NA_DRY_RUN=1 bash .claude/hooks/na/dispatch)"
+check "the next commit carries the line"     'echo "$OUTN" | grep -q "9.9.9 is out"'
+check "not on other commands"                '[ -z "$(pay claude ls | NA_DRY_RUN=1 bash .claude/hooks/na/dispatch)" ]'
+git add u.txt
+ERRN="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"
+check "git side says it too"                 'echo "$ERRN" | grep -q "9.9.9 is out"'
+git reset -q u.txt; rm -f u.txt
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/.update-check'
+c = json.load(io.open(p, encoding='utf-8')); c['ts'] = 0
+json.dump(c, io.open(p, 'w', encoding='utf-8'))
+PY
+check "offline: keeps what it knew"          '[ "$(NA_UPDATE_URL="file:///nowhere/x.json" "$PYBIN" $NA _check-update)" = "9.9.9" ]'
+printf '{"tag_name":"v0.0.1"}' > "$TMPDIR_ROOT/na-release.json"
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/.update-check'
+c = json.load(io.open(p, encoding='utf-8')); c['ts'] = 0
+json.dump(c, io.open(p, 'w', encoding='utf-8'))
+PY
+check "an older release is not news"         '[ -z "$(NA_UPDATE_URL="$RELURL" "$PYBIN" $NA _check-update)" ]'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['updates'] = 'off'
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+p = '.claude/never-again/.update-check'
+json.dump({"ts": 0, "latest": "9.9.9"}, io.open(p, 'w', encoding='utf-8'))
+PY
+check "updates off: silent, no fetch"        '[ -z "$(NA_UPDATE_URL="$RELURL" "$PYBIN" $NA _check-update)" ] && [ -z "$("$PYBIN" $NA _check-update --cached)" ]'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['updates'] = 'check'
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+rm -f "$CACHE" "$TMPDIR_ROOT/na-release.json"
+check "new state.json carries the setting"   'grep -q "\"updates\": \"check\"" .claude/never-again/state.json'
+check ".update-check is ignored"             'git check-ignore -q .claude/never-again/.update-check'
+
+echo
 echo "=== na upgrade moves one repo, on request, forwards only ==="
 # A copy of the source with a higher version stands in for a release; the
 # network path differs only in where the tarball comes from.

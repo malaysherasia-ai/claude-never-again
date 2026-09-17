@@ -38,4 +38,10 @@ if [ -n "$NA_TOOL_USE_ID" ]; then
 else
   "$NA_PY" "$NA_CLI" _proceeded >/dev/null 2>&1
 fi
+
+# The commit is done, so this is the one place a network request costs
+# nobody a wait: at most once a day, ask GitHub for the newest release. The
+# answer is cached; the next commit's dispatcher names it. Off with
+# "updates": "off" in state.json.
+[ -n "${NA_DRY_RUN:-}" ] || "$NA_PY" "$NA_CLI" _check-update >/dev/null 2>&1
 exit 0

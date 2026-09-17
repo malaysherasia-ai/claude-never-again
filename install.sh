@@ -178,6 +178,7 @@ else
   "loadedWarn": 60,
   "tokensPerPreventedRepeat": 8000,
   "promotion": "pull-request",
+  "updates": "check",
   "lessons": {}
 }
 JSON
