@@ -86,6 +86,15 @@ while IFS=$'\t' read -r id mode trigger watch; do
   fi
 done <<<"$INDEX"
 
+# One line per commit this dispatcher saw, whoever called it. Answers the
+# question a field run could not: did the agent call the hook at all?
+if [ "$IS_COMMIT" -eq 1 ] && [ -z "${NA_DRY_RUN:-}" ]; then
+  verdict=clean
+  { [ -n "$OUTS" ] || [ "$RC" -ne 0 ]; } && verdict=fired
+  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${NA_AGENT:-claude}" "$NA_SOURCE" "$verdict" \
+    >> "$NA_ROOT/.claude/never-again/calls.log" 2>/dev/null || true
+fi
+
 [ "$NA_SOURCE" = "git" ] && exit "$RC"
 [ -z "$OUTS" ] && exit 0
 

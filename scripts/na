@@ -11,7 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -627,6 +627,7 @@ BLOCK_RE = re.compile(r"\n*<!-- BEGIN never-again -->.*?<!-- END never-again -->
 # for hooks copied from the 0.2 browser-boot example, which still write it.
 GITIGNORE_HEADER = "# never-again (local only)"
 GITIGNORE_LINES = (".claude/never-again/fires.log",
+                   ".claude/never-again/calls.log",
                    ".claude/never-again/verified/",
                    ".claude/never-again/.last-boot",
                    "CLAUDE.md.bak", "AGENTS.md.bak", "GEMINI.md.bak",
@@ -643,7 +644,7 @@ GITIGNORE_UNIGNORE = (
     "!.claude/hooks/", ".claude/hooks/*", "!.claude/hooks/na/",
     "!.claude/never-again/",
     "!.claude/skills/", ".claude/skills/*", "!.claude/skills/never-again/",
-) + GITIGNORE_LINES[:3]
+) + tuple(l for l in GITIGNORE_LINES if l.startswith(".claude/never-again/"))
 
 
 def _read_text(path):
@@ -846,16 +847,37 @@ AGENTS = {
 # session's working directory, and their docs prefer resolving from the git
 # root over a relative path. Antigravity's docs show a workspace-relative
 # path (./scripts/lint.sh), so its entry is relative and travels with git.
+#
+# On Windows "bash" is the trap: in a process an agent spawns, PATH holds
+# WSL's bash or no bash at all, never Git's. The first Antigravity run on a
+# Windows machine called nothing for exactly that reason. So a Windows host
+# writes Git's bash.exe by its full path, and the script path relative to
+# the repo, which is where these agents run their hooks from.
 GIT_ROOT_EXPR = "$(git rev-parse --show-toplevel)"
+WIN_BASH = (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe",
+            r"C:\Program Files (x86)\Git\bin\bash.exe")
+
+
+def _win_bash():
+    for c in WIN_BASH + (os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Git", "bin", "bash.exe"),):
+        if c and os.path.isfile(c):
+            return c.replace("\\", "/")
+    return None
 
 
 def _agent_cmds(agent):
-    if agent == "antigravity":
-        return ("bash .claude/hooks/na/dispatch --agent antigravity",
-                "bash .claude/hooks/na/_after.sh --agent antigravity")
-    disp = 'bash "%s/.claude/hooks/na/dispatch" --agent %s' % (GIT_ROOT_EXPR, agent)
-    after = 'bash "%s/.claude/hooks/na/_after.sh" --agent %s' % (GIT_ROOT_EXPR, agent)
-    return disp, after
+    """(pre-tool command, post-tool command) for AGENT. Copilot gets both a
+    bash and a powershell form since its file has a field for each; the
+    others get the form for the host this runs on."""
+    unix_root = 'bash "%s/.claude/hooks/na/%%s" --agent %s' % (GIT_ROOT_EXPR, agent)
+    unix_rel = "bash .claude/hooks/na/%%s --agent %s" % agent
+    wb = _win_bash() if os.name == "nt" else None
+    win = ('"%s" .claude/hooks/na/%%s --agent %s' % (wb, agent)) if wb else None
+    if agent == "copilot":
+        ps = '& "%s" .claude/hooks/na/%%s --agent copilot' % (wb or "C:/Program Files/Git/bin/bash.exe")
+        return ((unix_root % "dispatch", ps % "dispatch"), (unix_root % "_after.sh", ps % "_after.sh"))
+    form = win or (unix_rel if agent == "antigravity" else unix_root)
+    return form % "dispatch", form % "_after.sh"
 
 
 def _is_ours(entry):
@@ -883,14 +905,20 @@ def _json_save(path, data):
 
 
 def _merge_group(container, event, matcher, entry):
-    """Add ENTRY under EVENT in a Claude-shaped hooks container, unless one of
-    ours is already there. Returns True when something was added."""
+    """Add ENTRY under EVENT in a Claude-shaped hooks container. One of ours
+    already there is brought up to date in place when its command differs
+    (an older release wrote a different form). Returns True on any change."""
     groups = container.setdefault(event, [])
     if not isinstance(groups, list):
         return False
     for g in groups:
-        if any(_is_ours(h) for h in (g or {}).get("hooks", []) or []):
-            return False
+        for h in (g or {}).get("hooks", []) or []:
+            if _is_ours(h):
+                if h == entry:
+                    return False
+                h.clear()
+                h.update(entry)
+                return True
     group = next((g for g in groups if isinstance(g, dict) and g.get("matcher") == matcher), None)
     if group is None:
         group = {"matcher": matcher, "hooks": []}
@@ -952,8 +980,8 @@ def register_agent(agent):
         added |= _merge_group(c, "PostToolUse", "run_command", {"type": "command", "command": after})
     elif agent == "copilot":
         want = {"version": 1, "hooks": {
-            "preToolUse": [{"type": "command", "matcher": "bash", "bash": disp, "powershell": disp, "timeoutSec": 600}],
-            "postToolUse": [{"type": "command", "matcher": "bash", "bash": after, "powershell": after}]}}
+            "preToolUse": [{"type": "command", "matcher": "bash", "bash": disp[0], "powershell": disp[1], "timeoutSec": 600}],
+            "postToolUse": [{"type": "command", "matcher": "bash", "bash": after[0], "powershell": after[1]}]}}
         added = data != want
         data = want
     if added:
