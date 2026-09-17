@@ -2,6 +2,20 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.2.0] — 2026-09-17
+
+Releases are frequent now, and every project moves by re-running the
+installer. This makes that one command.
+
+### Added
+
+- **`na upgrade`** fetches the newest release from GitHub and runs its
+  installer in this repo. `--check` only reports. `--yes` skips the prompt.
+  `--from DIR|TARBALL` installs from a local copy, which is also how the
+  tests cover it without the network. It refuses to move backwards and
+  unpacks nothing outside its own temp folder.
+- The README no longer says "no network calls"; it says which one there is.
+
 ## [1.1.0] — 2026-09-17
 
 The same hooks under Codex, Gemini CLI, GitHub Copilot and Google

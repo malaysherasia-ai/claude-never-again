@@ -327,6 +327,7 @@ never-again skill" so they count from day one.
 Other agents: --agent codex|gemini|copilot|antigravity registers the same
 hooks with them (Codex asks you to trust the hook once: /hooks).
 
-Stats:  .claude/never-again/na          (PowerShell: .claude\never-again\na.cmd)
-Handy:  alias na=".claude/never-again/na"
+Stats:    .claude/never-again/na          (PowerShell: .claude\never-again\na.cmd)
+Upgrade:  .claude/never-again/na upgrade  (fetches the newest release; --check only looks)
+Handy:    alias na=".claude/never-again/na"
 EOF

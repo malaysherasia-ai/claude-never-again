@@ -7,7 +7,8 @@ Take the mistake away.**
 stop this next time? If it can, it writes a hook that blocks the wrong action.
 If it cannot, it writes one short line in a rules file. That is all.
 
-MIT licensed. Runs on your machine. No account, no tracking, no network calls.
+MIT licensed. Runs on your machine. No account, no tracking. The one network
+call is `na upgrade`, and only when you run it.
 
 Built for Claude Code. Works the same with Codex, Gemini CLI, GitHub Copilot
 and Google Antigravity: see [Other agents](#other-agents).
@@ -29,6 +30,10 @@ git clone --depth 1 https://github.com/malaysherasia-ai/claude-never-again.git
 Run it with `bash`, not `./install.sh`. A ZIP download loses the file's
 run permission, and Windows checkouts are unreliable about it. `bash` always
 works.
+
+**Already installed?** `.claude/never-again/na upgrade` fetches the newest
+release and runs its installer in this repo. `na upgrade --check` only says
+whether there is one. Each repo moves when you say so, never under you.
 
 **Run the installer yourself, from a terminal.** Claude Code's auto mode will
 not run an installer it has never seen. It also will not edit its own
@@ -401,7 +406,8 @@ holds other tools and paths that only work on one machine, so we do not ask
 you to share it. After cloning, run the installer once. It registers every
 hook in `state.json` with Claude Code and with every other agent the repo
 uses, and installs the git stub. It is safe to run again, changes nothing
-that already matches, and takes a second.
+that already matches, and takes a second. After that, `na upgrade` is the
+same installer, fetched for you.
 
 `install.sh` backs up `CLAUDE.md` before touching it and is safe to re-run.
 `LESSONS.md` and the hooks are meant to be committed. They are team knowledge.
