@@ -52,15 +52,21 @@ if [ "$NA_SOURCE" = "git" ] || na_is_commit "$NA_CMD"; then IS_COMMIT=1; fi
 # The index: id, mode, trigger, watch. One spawn, however many hooks.
 INDEX="$("$NA_PY" "$NA_CLI" _index 2>/dev/null)" || INDEX=""
 INDEX="${INDEX//$'\r'/}"
-[ -z "$INDEX" ] && exit 0
+# No live hook and not a commit: nothing to do. A commit still gets the
+# release nudge and its calls.log line, hooks or not.
+[ -z "$INDEX" ] && [ "$IS_COMMIT" -eq 0 ] && exit 0
 
 # Modes for every hook in one variable, so na_mode never spawns again.
 NA_MODES="$(printf '%s\n' "$INDEX" | awk -F'\t' '{printf "%s=%s;", $1, $2}')"
 export NA_MODES
 
 # Changed files once; na_changed_files in each hook filters this list.
-NA_CHANGED_ALL="$(na_changed_files)"
-export NA_CHANGED_ALL
+# Assigned only when set: na_changed_files takes a set-but-empty value as
+# "the dispatcher found nothing", and it must list the files itself here.
+if [ -n "$INDEX" ]; then
+  NA_CHANGED_ALL="$(na_changed_files)"
+  export NA_CHANGED_ALL
+fi
 
 HOOKS_DIR="$NA_ROOT/.claude/hooks/na"
 OUTS=""
@@ -93,6 +99,18 @@ if [ "$IS_COMMIT" -eq 1 ] && [ -z "${NA_DRY_RUN:-}" ]; then
   { [ -n "$OUTS" ] || [ "$RC" -ne 0 ]; } && verdict=fired
   printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${NA_AGENT:-claude}" "$NA_SOURCE" "$verdict" \
     >> "$NA_ROOT/.claude/never-again/calls.log" 2>/dev/null || true
+fi
+
+# A newer release, from the cache the after-commit hook keeps. No network here.
+if [ "$IS_COMMIT" -eq 1 ]; then
+  NEWER="$("$NA_PY" "$NA_CLI" _check-update --cached 2>/dev/null)"; NEWER="${NEWER//$'\r'/}"
+  if [ -n "$NEWER" ]; then
+    if [ "$NA_SOURCE" = "git" ]; then
+      echo "never-again $NEWER is out (this repo has $("$NA_PY" "$NA_CLI" --version | sed 's/.* //')): .claude/never-again/na upgrade" >&2
+    else
+      OUTS="$OUTS"'{"systemMessage":"never-again '"$NEWER"' is out: run .claude/never-again/na upgrade when convenient"}'$'\n'
+    fi
+  fi
 fi
 
 [ "$NA_SOURCE" = "git" ] && exit "$RC"

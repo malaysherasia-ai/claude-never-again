@@ -7,8 +7,10 @@ Take the mistake away.**
 stop this next time? If it can, it writes a hook that blocks the wrong action.
 If it cannot, it writes one short line in a rules file. That is all.
 
-MIT licensed. Runs on your machine. No account, no tracking. The one network
-call is `na upgrade`, and only when you run it.
+MIT licensed. Runs on your machine. No account, no tracking. It talks to
+GitHub twice, both times about releases: `na upgrade` when you run it, and a
+once-a-day check for a newer version after a commit. That check sends nothing
+but the request. `"updates": "off"` in `state.json` stops it.
 
 Built for Claude Code. Works the same with Codex, Gemini CLI, GitHub Copilot
 and Google Antigravity: see [Other agents](#other-agents).
@@ -34,6 +36,13 @@ works.
 **Already installed?** `.claude/never-again/na upgrade` fetches the newest
 release and runs its installer in this repo. `na upgrade --check` only says
 whether there is one. Each repo moves when you say so, never under you.
+
+**Staying current.** After a commit, at most once a day, the after-commit
+hook asks GitHub for the newest release and remembers the answer. The next
+commit, and `na` itself, then say one line: *never-again 1.4.0 is out: na
+upgrade*. Nothing is installed for you. Offline, it stays quiet and asks
+again the next day. A repo that only commits from a terminal sees the line
+when someone runs `na`. Turn it off with `"updates": "off"` in `state.json`.
 
 **Run the installer yourself, from a terminal.** Claude Code's auto mode will
 not run an installer it has never seen. It also will not edit its own
@@ -386,7 +395,8 @@ AGENTS.md, GEMINI.md,
   ├── archive/L###.md               the full story, read only when asked
   ├── verified/                     one record per verify hook; local, gitignored
   ├── fires.log                     every fire, its outcome and grade; local, gitignored
-  └── calls.log                     one line per commit the dispatcher saw; local, gitignored
+  ├── calls.log                     one line per commit the dispatcher saw; local, gitignored
+  └── .update-check                 the once-a-day release check; local, gitignored
 ```
 
 **Already have notes?** Most repos do: a `CLAUDE.md` full of rules, a
