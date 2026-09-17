@@ -17,7 +17,8 @@
 set -u
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-T="${1:-${TMPDIR:-/tmp}/na-hooks-test}"
+TMPDIR_ROOT="${TMPDIR:-/tmp}"
+T="${1:-$TMPDIR_ROOT/na-hooks-test}"
 
 na_python() {
   c=""
@@ -675,6 +676,32 @@ p = '.claude/never-again/state.json'
 st = json.load(io.open(p, encoding='utf-8')); del st['lessons']['L021']
 json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
 PY
+
+echo
+echo "=== na upgrade moves one repo, on request, forwards only ==="
+# A copy of the source with a higher version stands in for a release; the
+# network path differs only in where the tarball comes from.
+UPSRC="$TMPDIR_ROOT/na-upgrade-src"; rm -rf "$UPSRC"; mkdir -p "$UPSRC"
+for f in install.sh scripts templates skills; do cp -R "$SRC/$f" "$UPSRC/"; done
+sedi 's/^VERSION = "[0-9.]*"/VERSION = "9.9.9"/' "$UPSRC/scripts/na"
+OUTU="$("$PYBIN" $NA upgrade --check --from "$SRC" 2>&1)"
+check "same version: nothing to do"      'echo "$OUTU" | grep -q "up to date"'
+OUTU="$("$PYBIN" $NA upgrade --check --from "$UPSRC" 2>&1)"
+check "--check reports, changes nothing" 'echo "$OUTU" | grep -q "available  9.9.9" && "$PYBIN" $NA --version | grep -q "never-again 1\."'
+OUTU="$("$PYBIN" $NA upgrade --from "$UPSRC" </dev/null 2>&1)"
+check "no answer: nothing changed"       'echo "$OUTU" | grep -q "Nothing changed" && "$PYBIN" $NA --version | grep -q "never-again 1\."'
+echo "keep me" >> LESSONS.md
+OUTU="$("$PYBIN" $NA upgrade --yes --from "$UPSRC" 2>&1)"
+check "--yes runs the installer here"    'echo "$OUTU" | grep -q -- "-> 9.9.9" && "$PYBIN" $NA --version | grep -q "never-again 9.9.9"'
+check "upgrade keeps LESSONS.md"         'grep -q "keep me" LESSONS.md'
+check "upgrade keeps state.json"         'grep -q "\"agents\"" .claude/never-again/state.json'
+OUTU="$("$PYBIN" $NA upgrade --yes --from "$SRC" 2>&1)"
+check "never moves backwards"            'echo "$OUTU" | grep -q "up to date" && "$PYBIN" $NA --version | grep -q "never-again 9.9.9"'
+( cd "$UPSRC" && sedi 's/^VERSION = "9.9.9"/VERSION = "9.9.10"/' scripts/na && mkdir -p ../na-upgrade-tar && tar czf ../na-upgrade-tar/release.tgz --transform 's,^,claude-never-again-9.9.10/,' . 2>/dev/null || tar czf ../na-upgrade-tar/release.tgz -s ',^,claude-never-again-9.9.10/,' . )
+OUTU="$("$PYBIN" $NA upgrade --yes --from "$TMPDIR_ROOT/na-upgrade-tar/release.tgz" 2>&1)"
+check "a tarball works the same way"     'echo "$OUTU" | grep -q -- "-> 9.9.10" && "$PYBIN" $NA --version | grep -q "never-again 9.9.10"'
+bash "$SRC/install.sh" . >/dev/null 2>&1
+rm -rf "$UPSRC" "$TMPDIR_ROOT/na-upgrade-tar"
 
 echo
 echo "  ---------------------------------"

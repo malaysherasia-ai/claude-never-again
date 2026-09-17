@@ -11,7 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -19,6 +19,9 @@ Everything here is counted, not reasoned. It costs no tokens by design.
   na              stats, including loaded rule density for the current directory
   na sort         reorder rule lines by fire count (most-hit first) in each LESSONS.md
   na uninstall    remove never-again from this repo (--yes to skip the prompt)
+  na upgrade      fetch the newest release and re-run its installer here
+                  (--check only looks; --yes skips the prompt; --from DIR|TARBALL
+                  installs from a local copy instead of GitHub)
   na ok      L017 the latest fire was right      (grades that fire; counts toward promotion)
   na wrong   L017 the latest fire was a false positive (grades it; streak resets)
   na promote L017 warn -> block
@@ -1260,6 +1263,169 @@ def _prune_empty(path):
     return False
 
 
+# --- upgrade ------------------------------------------------------------------
+# An install is per repo on purpose: a project moves to a newer release when
+# you say so, not when a global copy changes under it. `na upgrade` is how it
+# moves: fetch the release, run its installer here. This is the one place in
+# the tool that touches the network, and only when you run it.
+REPO = "malaysherasia-ai/claude-never-again"
+
+
+def _bash():
+    """A bash that runs. From PowerShell through na.cmd, Git's bash is
+    installed but usually not on PATH."""
+    import shutil
+    for c in ("bash", r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe"):
+        found = shutil.which(c) if not os.path.isabs(c) else (c if os.path.isfile(c) else None)
+        if found:
+            return found
+    return None
+
+
+def _source_version(src):
+    try:
+        for ln in open(os.path.join(src, "scripts", "na"), encoding="utf-8"):
+            if ln.startswith("VERSION = "):
+                return ln.split('"')[1]
+    except OSError:
+        pass
+    return None
+
+
+def _vtuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v or "")[:3])
+
+
+def _latest_release():
+    """(tag, tarball url) of the newest release on GitHub."""
+    import urllib.request
+    req = urllib.request.Request("https://api.github.com/repos/%s/releases/latest" % REPO,
+                                 headers={"Accept": "application/vnd.github+json",
+                                          "User-Agent": "never-again/" + VERSION})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        d = json.load(r)
+    tag = d["tag_name"]
+    return tag, "https://github.com/%s/archive/refs/tags/%s.tar.gz" % (REPO, tag)
+
+
+def _fetch_source(url, dest):
+    """Download and unpack a release tarball into DEST. Returns the directory
+    that holds install.sh. Refuses entries that would land outside DEST."""
+    import tarfile, urllib.request, io as _io
+    req = urllib.request.Request(url, headers={"User-Agent": "never-again/" + VERSION})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        data = r.read()
+    with tarfile.open(fileobj=_io.BytesIO(data), mode="r:gz") as tf:
+        base = os.path.realpath(dest)
+        for m in tf.getmembers():
+            target = os.path.realpath(os.path.join(dest, m.name))
+            if target != base and not target.startswith(base + os.sep):
+                raise ValueError("entry outside the unpack dir: " + m.name)
+            if m.issym() or m.islnk():
+                raise ValueError("links are not expected in a release: " + m.name)
+        try:
+            tf.extractall(dest, filter="data")
+        except TypeError:
+            tf.extractall(dest)
+    for name in sorted(os.listdir(dest)):
+        if os.path.isfile(os.path.join(dest, name, "install.sh")):
+            return os.path.join(dest, name)
+    raise ValueError("no install.sh in the download")
+
+
+def upgrade(argv):
+    """`na upgrade [--check] [--yes] [--from DIR|TARBALL]`."""
+    check = "--check" in argv
+    assume_yes = "--yes" in argv or "-y" in argv
+    src_opt = None
+    if "--from" in argv:
+        i = argv.index("--from")
+        if i + 1 >= len(argv):
+            sys.exit("usage: na upgrade [--check] [--yes] [--from DIR|TARBALL]")
+        src_opt = argv[i + 1]
+    import shutil, subprocess, tempfile
+    tmp = tempfile.mkdtemp(prefix="never-again-")
+    try:
+        print()
+        src, url = None, None
+        if src_opt:
+            if os.path.isdir(src_opt):
+                src = os.path.abspath(src_opt)
+            elif os.path.isfile(src_opt):
+                url = "file:///" + os.path.abspath(src_opt).replace("\\", "/").lstrip("/")
+                try:
+                    src = _fetch_source(url, tmp)
+                except (OSError, ValueError, tarfile_error()) as exc:
+                    print("  could not unpack %s: %s" % (src_opt, exc))
+                    return 1
+            else:
+                print("  %s is neither a directory nor a file" % src_opt)
+                return 1
+            new = _source_version(src)
+            label = "%s (%s)" % (new, src_opt)
+            if not new:
+                print("  %s holds no never-again scripts/na" % src_opt)
+                return 1
+        else:
+            try:
+                tag, url = _latest_release()
+            except Exception as exc:
+                print("  could not reach GitHub: %s" % exc)
+                print("  Upgrade by hand: clone %s and run bash install.sh here." % REPO)
+                return 1
+            new = tag.lstrip("v")
+            label = "%s (release %s)" % (new, tag)
+
+        print("  installed  %s" % VERSION)
+        print("  available  %s" % label)
+        if _vtuple(new) <= _vtuple(VERSION):
+            print("  Nothing to do: this repo is up to date.")
+            print()
+            return 0
+        if check:
+            print("  Run `na upgrade` to move this repo to %s." % new)
+            print()
+            return 0
+        if not assume_yes:
+            try:
+                answer = input("  Upgrade %s -> %s here? Runs the release's install.sh in %s [y/N] " % (VERSION, new, ROOT)).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                print("  Nothing changed: no answer given. Re-run with --yes to confirm without a prompt.")
+                print()
+                return 1
+            if answer not in ("y", "yes"):
+                print("  Nothing changed.")
+                print()
+                return 1
+            print()
+
+        if src is None:
+            try:
+                src = _fetch_source(url, tmp)
+            except (OSError, ValueError, tarfile_error()) as exc:
+                print("  download failed: %s" % exc)
+                return 1
+        bash = _bash()
+        if not bash:
+            print("  no bash found; run this yourself:  bash %s %s" % (os.path.join(src, "install.sh"), ROOT))
+            return 1
+        rc = subprocess.call([bash, os.path.join(src, "install.sh"), ROOT])
+        if rc != 0:
+            print("  install.sh exited %d; the repo may be part way between versions. Re-run na upgrade." % rc)
+            return rc
+        print("  never-again %s -> %s in %s" % (VERSION, new, ROOT))
+        print()
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def tarfile_error():
+    import tarfile
+    return tarfile.TarError
+
+
 def uninstall(argv):
     assume_yes = "--yes" in argv or "-y" in argv
 
@@ -1472,6 +1638,8 @@ def main():
         return sort_rules()
     if cmd == "uninstall":
         return uninstall(args[1:])
+    if cmd == "upgrade":
+        return upgrade(args[1:])
     # Internal: called by the hooks, not by people.
     if cmd == "_fired":
         if len(args) < 4:
