@@ -57,13 +57,24 @@ git add a.txt && git commit -qm init
 export CLAUDE_PROJECT_DIR="$T"
 NA=".claude/never-again/na"
 LOG=".claude/never-again/fires.log"
+CWD="$(pwd -W 2>/dev/null || pwd -P)"
 HOOK=".claude/hooks/na/L001.sh"
 
 # The hook under test is the template itself, with a check that flags any
 # changed .txt file containing the marker word. Run through bash explicitly
 # with a JSON payload, the way Claude Code runs it.
 fire() { printf '{"tool_input":{"command":%s}%s}' "$("$PYBIN" -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1")" "${2:+,\"tool_use_id\":\"$2\"}" | bash "$HOOK"; }
-after() { printf '{"tool_use_id":"%s"}' "${1:-}" | bash .claude/hooks/na/_after.sh; }
+after() { printf '{"tool_input":{"command":"git commit -m x"},"tool_use_id":"%s"}' "${1:-}" | bash .claude/hooks/na/_after.sh; }
+pay() {  # pay AGENT CMD -> that agent's PreToolUse payload
+  local c; c="$("$PYBIN" -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$2")"
+  case "$1" in
+    claude)      printf '{"tool_name":"Bash","tool_input":{"command":%s},"tool_use_id":"tu9","cwd":"%s"}' "$c" "$CWD" ;;
+    codex)       printf '{"tool_name":"Bash","tool_input":{"command":%s},"turn_id":"t9","cwd":"%s"}' "$c" "$CWD" ;;
+    gemini)      printf '{"tool_name":"run_shell_command","tool_input":{"command":%s},"cwd":"%s"}' "$c" "$CWD" ;;
+    copilot)     printf '{"toolName":"bash","toolArgs":{"command":%s},"cwd":"%s"}' "$c" "$CWD" ;;
+    antigravity) printf '{"toolCall":{"name":"run_command","args":{"CommandLine":%s,"Cwd":"%s"}},"conversationId":"c9"}' "$c" "$CWD" ;;
+  esac
+}
 dispatch() { printf '{"tool_input":{"command":%s}%s}' "$("$PYBIN" -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1")" "${2:+,\"tool_use_id\":\"$2\"}" | bash .claude/hooks/na/dispatch; }
 logn() { [ -f "$LOG" ] && grep -c . "$LOG" || echo 0; }
 col() { awk -F'\t' -v n="$1" 'END{print $n}' "$LOG"; }    # last line, column n
@@ -78,6 +89,7 @@ check "merge stub installed"       'grep -q never-again .git/hooks/pre-merge-com
 check "na --version answers"       '"$PYBIN" $NA --version | grep -q "never-again 1\."'
 check "na --help answers"          '"$PYBIN" $NA --help | grep -q "na sort"'
 check "resolver registered"        'grep -q _after.sh .claude/settings.json'
+check "no if filter on our entries" '! grep -q "\"if\"" .claude/settings.json'
 check "dispatcher registered"      'grep -q "/na/dispatch" .claude/settings.json'
 check "dispatcher installed"       '[ -x .claude/hooks/na/dispatch ]'
 
@@ -131,6 +143,19 @@ check "installer drops a per-hook entry"   'echo "$OUTR" | grep -q "dropped 1 pe
 check "dispatcher entry registered once"   '[ "$(grep -c "/na/dispatch" .claude/settings.json)" -eq 1 ]'
 OUTR2="$(bash "$SRC/install.sh" . 2>&1)"
 check "second run reports nothing to do"   'echo "$OUTR2" | grep -q "already registered"'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/settings.json'
+d = json.load(io.open(p, encoding='utf-8'))
+for ev in d['hooks'].values():
+    for g in ev:
+        for h in g['hooks']:
+            if 'hooks/na/' in h['command']:
+                h['if'] = 'Bash(git commit *)'
+json.dump(d, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+OUTR3="$(bash "$SRC/install.sh" . 2>&1)"
+check "an old if filter is dropped in place"  'echo "$OUTR3" | grep -q "dropped the .if. filter from 3" && ! grep -q "\"if\"" .claude/settings.json'
 echo "$OUTR2" | grep -q "already registered" || echo "$OUTR2" | sed 's/^/      | /' | head -30
 
 echo
@@ -141,6 +166,22 @@ echo TODO-BLOCK > d0.txt
 OUTD="$(NA_DRY_RUN=1 dispatch "git commit -m x")"
 check "dispatch asks through the index"   'echo "$OUTD" | grep -q "\"ask\"" && echo "$OUTD" | grep -q "d0.txt"'
 check "dispatch: not a commit, silent"    '[ -z "$(NA_DRY_RUN=1 dispatch "ls")" ]'
+check "chained commit reaches the hook"   'NA_DRY_RUN=1 dispatch "git add . && git commit -m x" | grep -q "\"ask\""'
+# A fake interpreter that leaves a mark when started. The probe runs
+# NA_PYTHON first, so a mark means an interpreter was looked for at all.
+printf '#!/bin/sh\ntouch "%s/na-started"; exit 1\n' "$T" > "$T/fakepy"; chmod +x "$T/fakepy"
+rm -f "$T/na-started"
+printf '{"tool_input":{"command":"ls -la"}}' | NA_PYTHON="$T/fakepy" bash .claude/hooks/na/dispatch >/dev/null 2>&1
+check "no commit in the payload: no interpreter" '[ ! -f "$T/na-started" ]'
+printf '{"tool_input":{"command":"ls -la"}}' | NA_PYTHON="$T/fakepy" bash .claude/hooks/na/_after.sh >/dev/null 2>&1
+check "after: no commit, no interpreter"  '[ ! -f "$T/na-started" ]'
+for a in codex gemini copilot antigravity; do
+  pay "$a" "ls -la" | NA_PYTHON="$T/fakepy" bash .claude/hooks/na/dispatch --agent "$a" >/dev/null 2>&1
+done
+check "same for every agent"              '[ ! -f "$T/na-started" ]'
+printf '{"tool_input":{"command":"git commit -m x"}}' | NA_PYTHON="$T/fakepy" bash .claude/hooks/na/dispatch >/dev/null 2>&1
+check "a commit does start one"           '[ -f "$T/na-started" ]'
+rm -f "$T/na-started" "$T/fakepy"
 sedi 's/^WATCH=""/WATCH=".css"/' "$HOOK"
 check "WATCH: no .css changed, hook skipped" '[ -z "$(NA_DRY_RUN=1 dispatch "git commit -m x")" ]'
 echo x > e.css
@@ -581,17 +622,6 @@ echo
 echo "=== the same hooks under other agents ==="
 # Each agent hands the dispatcher its own payload shape and wants its own
 # answer shape back. The hook in between is the one from the template.
-CWD="$(pwd -W 2>/dev/null || pwd -P)"
-pay() {  # pay AGENT CMD -> that agent's PreToolUse payload
-  local c; c="$("$PYBIN" -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$2")"
-  case "$1" in
-    claude)      printf '{"tool_name":"Bash","tool_input":{"command":%s},"tool_use_id":"tu9","cwd":"%s"}' "$c" "$CWD" ;;
-    codex)       printf '{"tool_name":"Bash","tool_input":{"command":%s},"turn_id":"t9","cwd":"%s"}' "$c" "$CWD" ;;
-    gemini)      printf '{"tool_name":"run_shell_command","tool_input":{"command":%s},"cwd":"%s"}' "$c" "$CWD" ;;
-    copilot)     printf '{"toolName":"bash","toolArgs":{"command":%s},"cwd":"%s"}' "$c" "$CWD" ;;
-    antigravity) printf '{"toolCall":{"name":"run_command","args":{"CommandLine":%s,"Cwd":"%s"}},"conversationId":"c9"}' "$c" "$CWD" ;;
-  esac
-}
 agent() { pay "$1" "$2" | NA_DRY_RUN="${3-1}" bash .claude/hooks/na/dispatch --agent "$1" 2>/dev/null; }
 
 cp .claude/never-again/hook-template.sh .claude/hooks/na/L021.sh

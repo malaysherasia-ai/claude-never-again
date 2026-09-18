@@ -29,6 +29,13 @@ export NA_AGENT
 NA_PAYLOAD=""
 [ "${NA_EVENT:-}" = "git" ] || NA_PAYLOAD="$(cat)"
 
+# The entry has no `if` filter, so this runs on every Bash call. A command
+# that is not a commit cannot contain the word; leave before any interpreter
+# starts, which is the whole cost for the ordinary call.
+if [ "${NA_EVENT:-}" != "git" ]; then
+  case "$NA_PAYLOAD" in *commit*) ;; *) exit 0 ;; esac
+fi
+
 if ! NA_PY="$(NA_PYTHON="${NA_PY:-${NA_PYTHON:-}}" na_python)"; then
   if [ "${NA_EVENT:-}" = "git" ]; then
     echo "never-again: no working python found; no hook ran. Install Python 3.7+ or set NA_PYTHON." >&2
