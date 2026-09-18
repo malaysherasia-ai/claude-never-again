@@ -2,6 +2,16 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.3.1] — 2026-09-18
+
+### Fixed
+
+- **The hosting warning ignored a `.vercelignore` written with leading
+  slashes** (`/.claude/`), so a repo that had already excluded everything
+  was warned on every install.
+- **`calls.log` no longer names an agent for a commit git saw.** The git
+  side does not know who committed; the column says `-` there.
+
 ## [1.3.0] — 2026-09-17
 
 Releases are frequent now, and a repo that nobody upgrades stays on the
