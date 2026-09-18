@@ -696,13 +696,25 @@ check "codex: own entry kept"              'grep -q "echo mine" .codex/hooks.jso
 check "codex: after-hook registered"       'grep -q "_after.sh" .codex/hooks.json'
 check "gemini: BeforeTool + AfterTool"     'grep -q BeforeTool .gemini/settings.json && grep -q AfterTool .gemini/settings.json'
 check "copilot: own file"                  'grep -q preToolUse .github/hooks/never-again.json && grep -q '"'"'"version": 1'"'"' .github/hooks/never-again.json'
+# The entry must work from any directory: Antigravity was seen running it
+# from .agents/ itself. Run the exact command from the file, as a shell
+# would, from that directory and from a nested one.
+entry_cmd() { "$PYBIN" -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+c = d[sys.argv[2]] if sys.argv[2] in d else d
+print(next(h["command"] for g in c[sys.argv[3]] for h in g["hooks"] if "hooks/na/" in h["command"]))' "$@"; }
+AGCMD="$(entry_cmd .agents/hooks.json never-again PreToolUse)"
+CXCMD="$(entry_cmd .codex/hooks.json hooks PreToolUse)"
+check "entries find the root by git"       'echo "$AGCMD" | grep -q "rev-parse --show-toplevel" && echo "$CXCMD" | grep -q "rev-parse --show-toplevel"'
+echo TODO-BLOCK > agdir.txt
+check "antigravity entry runs from .agents/" '(cd .agents && pay antigravity "git commit -m x" | NA_DRY_RUN=1 eval "$AGCMD" | grep -q agdir.txt)'
+check "codex entry runs from a nested dir" '(mkdir -p deep/er && cd deep/er && pay codex "git commit -m x" | NA_DRY_RUN=1 eval "$CXCMD" | grep -q agdir.txt)'
+rm -rf agdir.txt deep
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
-    check "antigravity: Git's bash by path"   'grep -q "Git/bin/bash.exe" .agents/hooks.json && grep -q "dispatch --agent antigravity" .agents/hooks.json && ! grep -q "\"bash .claude" .agents/hooks.json' ;;
-  *)
-    check "antigravity: relative entry"        'grep -q "\"bash .claude/hooks/na/dispatch --agent antigravity\"" .agents/hooks.json' ;;
+    check "windows: Git's bash by full path" 'echo "$AGCMD" | grep -q "Git/bin/bash.exe"' ;;
 esac
-check "copilot: bash and powershell forms" 'grep -q "\"bash\": \"bash " .github/hooks/never-again.json && grep -q "\"powershell\": \"& " .github/hooks/never-again.json'
+check "copilot: bash and powershell forms" 'grep -q "\"bash\": \"bash -c" .github/hooks/never-again.json && grep -q "\"powershell\": \"& " .github/hooks/never-again.json'
 "$PYBIN" - <<'PY'
 import json, io
 p = '.codex/hooks.json'

@@ -2,6 +2,23 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.4.1] — 2026-09-18
+
+From the third Antigravity run: the IDE runs a hook with `.agents/` as its
+working directory, so a repo-relative script path found nothing and the
+hook failed silently.
+
+### Fixed
+
+- **No agent entry depends on the working directory any more.** Each one
+  is `bash -c "cd <git root> && exec bash .claude/hooks/na/… --agent …"`,
+  with the root found by `git rev-parse --show-toplevel`, which works from
+  any directory inside the checkout. The quoting is the same for cmd,
+  PowerShell, a direct spawn and a Unix shell; Copilot's powershell field
+  uses PowerShell's own escape. Existing entries are rewritten in place on
+  the next install or `na upgrade`. The tests now run each entry's exact
+  command from `.agents/` and from a nested directory.
+
 ## [1.4.0] — 2026-09-18
 
 The first `calls.log` from the field showed a commit that only git's side

@@ -330,9 +330,11 @@ Things to know:
   dispatcher always answers on that path, even when it has nothing to say.
 - **Antigravity reads its hook file at startup.** Restart it after the
   installer, then ask it "which hooks are installed?" to confirm.
-- **On Windows the entry names Git's `bash.exe` by its full path.** A
-  process an agent spawns has WSL's bash on PATH, or none; never Git's. The
-  script path is relative to the repo, which is where these agents run.
+- **Every entry finds the repo itself.** Each one is "cd to the git root,
+  then run the script", so it does not matter which directory the agent
+  runs hooks from: Antigravity was seen using `.agents/` itself. On Windows
+  the entry names Git's `bash.exe` by its full path, because a process an
+  agent spawns has WSL's bash on PATH, or none; never Git's.
 - **Did the agent call the hook at all?** `.claude/never-again/calls.log`
   gets one line per commit the dispatcher saw, with the agent's name and
   whether anything fired. Local, gitignored. If a commit went through and
