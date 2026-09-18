@@ -97,7 +97,8 @@ done <<<"$INDEX"
 if [ "$IS_COMMIT" -eq 1 ] && [ -z "${NA_DRY_RUN:-}" ]; then
   verdict=clean
   { [ -n "$OUTS" ] || [ "$RC" -ne 0 ]; } && verdict=fired
-  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${NA_AGENT:-claude}" "$NA_SOURCE" "$verdict" \
+  who="${NA_AGENT:-claude}"; [ "$NA_SOURCE" = "git" ] && who="-"   # git does not know who committed
+  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$who" "$NA_SOURCE" "$verdict" \
     >> "$NA_ROOT/.claude/never-again/calls.log" 2>/dev/null || true
 fi
 

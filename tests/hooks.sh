@@ -571,7 +571,10 @@ OUT8="$(bash "$SRC/install.sh" . 2>&1)"
 check "vercel: warns about /LESSONS.md"    'echo "$OUT8" | grep -q "/LESSONS.md" && echo "$OUT8" | grep -q "public URLs"'
 printf '.claude\nLESSONS.md\nCLAUDE.md\n' > .vercelignore
 OUT9="$(bash "$SRC/install.sh" . 2>&1)"
-check "vercel: quiet once ignored"         '! echo "$OUT9" | grep -q "serve /LESSONS.md"'
+check "vercel: quiet once ignored"         '! echo "$OUT9" | grep -q "public URLs"'
+printf '/CLAUDE.md\n/LESSONS.md\n/.claude/\n' > .vercelignore
+OUT9="$(bash "$SRC/install.sh" . 2>&1)"
+check "vercel: leading slash counts too"   '! echo "$OUT9" | grep -q "public URLs"'
 rm -f vercel.json .vercelignore
 
 echo
@@ -649,6 +652,8 @@ pay codex "ls" | bash .claude/hooks/na/_after.sh --agent codex
 check "after a non-commit: still pending"  '[ "$(col 5)" = pending ]'
 pay codex "git commit -m x" | bash .claude/hooks/na/_after.sh --agent codex
 check "after the commit: proceeded"        '[ "$(col 5)" = proceeded ]'
+git add ag.txt; bash .claude/hooks/na/pre-commit >/dev/null 2>&1; git reset -q ag.txt
+check "git side logs no agent"             '[ "$(ccol 2)" = - ] && [ "$(ccol 3)" = git ]'
 rm -f ag.txt
 
 echo

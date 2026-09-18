@@ -309,7 +309,7 @@ ROOT_SITE=""
 for tell in index.html CNAME vercel.json netlify.toml firebase.json; do
   [ -f "$DEST/$tell" ] && ROOT_SITE="$tell" && break
 done
-if [ -n "$ROOT_SITE" ] && ! { [ -f "$DEST/.vercelignore" ] && grep -q "LESSONS.md" "$DEST/.vercelignore" && grep -q "^\.claude" "$DEST/.vercelignore"; }; then
+if [ -n "$ROOT_SITE" ] && ! { [ -f "$DEST/.vercelignore" ] && grep -q "LESSONS.md" "$DEST/.vercelignore" && grep -q "^/\{0,1\}\.claude" "$DEST/.vercelignore"; }; then
   echo "  hosting    $ROOT_SITE at the root: if this directory is deployed as a site, /LESSONS.md,"
   echo "             /CLAUDE.md and /.claude/ (hooks, settings, state) become public URLs."
   echo "             Exclude them (.vercelignore or the equivalent) or publish a subdirectory."
