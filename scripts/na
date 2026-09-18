@@ -11,7 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -777,16 +777,29 @@ def cmd_register():
         print("             never-again hooks yourself, see README" )
         return 1
     added = []
+    # No `if` filter on any entry. `Bash(git commit *)` matched only commands
+    # that begin with `git commit`, so `git add . && git commit` never reached
+    # the hook and only git's side saw it; the first calls.log from the field
+    # showed exactly that. The scripts decide from the command text, and exit
+    # before starting an interpreter when it holds no commit.
     for event in ("PostToolUse", "PostToolUseFailure"):
         if not any("/.claude/hooks/na/_after.sh" in c for c in _entries(settings, event)):
-            _add_entry(settings, event, {"type": "command", "if": "Bash(git commit *)", "command": AFTER_CMD})
+            _add_entry(settings, event, {"type": "command", "command": AFTER_CMD})
             added.append("_after.sh on " + event)
     # One dispatcher entry replaces one entry per hook. Per-hook entries from
     # earlier releases are dropped, or every hook would run twice.
     if not any("/.claude/hooks/na/dispatch" in c for c in _entries(settings, "PreToolUse")):
-        _add_entry(settings, "PreToolUse", {"type": "command", "if": "Bash(git commit *)",
-                                            "timeout": 600, "command": DISPATCH_CMD})
+        _add_entry(settings, "PreToolUse", {"type": "command", "timeout": 600, "command": DISPATCH_CMD})
         added.append("dispatch on PreToolUse")
+    # Entries an earlier release wrote with the filter lose it in place.
+    unfiltered = 0
+    for _event, _group, entry in _settings_hooks(settings):
+        if "if" in entry:
+            del entry["if"]
+            unfiltered += 1
+    if unfiltered:
+        added.append("dropped the `if` filter from %d entr%s so chained commits are seen"
+                     % (unfiltered, "y" if unfiltered == 1 else "ies"))
     dropped = 0
     for g in settings.get("hooks", {}).get("PreToolUse", []) or []:
         keep = []

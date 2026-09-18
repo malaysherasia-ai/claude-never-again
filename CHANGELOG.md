@@ -2,6 +2,25 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.4.0] — 2026-09-18
+
+The first `calls.log` from the field showed a commit that only git's side
+saw. The commit was `git add … && git commit …`, and Claude Code's `if:
+Bash(git commit *)` filter matches only a command that begins with `git
+commit`. So the prompt before the commit never ran.
+
+### Changed
+
+- **No `if` filter on the Claude Code entries.** The dispatcher and the
+  after-commit hook now run on every Bash call and decide from the command
+  text, which they already did. A call whose payload holds no `commit`
+  exits before any interpreter starts, so the ordinary call costs a shell
+  start and nothing more.
+- **Entries an earlier release wrote lose the filter in place** on the
+  next install or `na upgrade`.
+- The README's by-hand snippet now includes the dispatcher entry it had
+  been missing.
+
 ## [1.3.1] — 2026-09-18
 
 ### Fixed

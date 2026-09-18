@@ -87,7 +87,7 @@ echo '#!/usr/bin/env bash' > .claude/hooks/na/L001.sh
 import json
 d=json.load(open('.claude/settings.json'))
 d['hooks']['PreToolUse'][0]['hooks'].append({
-  "type":"command","if":"Bash(git commit *)",
+  "type":"command",
   "command":'"$CLAUDE_PROJECT_DIR"/.claude/hooks/na/L001.sh'})
 json.dump(d, open('.claude/settings.json','w'), indent=2)
 PY

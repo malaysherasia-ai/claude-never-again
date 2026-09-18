@@ -149,9 +149,8 @@ na_begin() {
   if [ "$NA_SOURCE" = "claude" ]; then
     NA_PAYLOAD="$(cat)"
     eval "$(na_payload_vars "$NA_PAYLOAD")"
-    # The `if` filter in settings.json is the first gate, but it has been seen
-    # to let unrelated commands through. Decide from the command text too, and
-    # do it properly: a commit is a `git ... commit` segment, not the substring.
+    # No `if` filter on the entry: the command text is the gate. Decide
+    # properly: a commit is a `git ... commit` segment, not the substring.
     if [ "$NA_TRIGGER" = "commit" ] && ! na_is_commit "$NA_CMD"; then
       exit 0
     fi

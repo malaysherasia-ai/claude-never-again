@@ -20,13 +20,16 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+NA_PAYLOAD="$(cat)"
+# No `if` filter on the entry: leave before any interpreter starts unless
+# the payload can hold a commit at all.
+case "$NA_PAYLOAD" in *commit*) ;; *) exit 0 ;; esac
 NA_PY="$(na_python)" || exit 0
 NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""; NA_CWD=""
-eval "$(na_payload_vars "$(cat)")"
+eval "$(na_payload_vars "$NA_PAYLOAD")"
 na_root_from "$NA_CWD"
 
-# Claude Code's `if: Bash(git commit *)` filter keeps this to commits. The
-# other agents have no such filter, so the command text decides here.
+# The command text decides; no entry carries a filter any more.
 [ -z "$NA_CMD" ] || na_is_commit "$NA_CMD" || exit 0
 
 NA_ROOT="$(na_native_path "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}")"

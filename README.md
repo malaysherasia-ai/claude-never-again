@@ -53,9 +53,15 @@ by hand afterwards:
 
 ```jsonc
 // .claude/settings.json: merge into "hooks"; keep everything else
-"PostToolUse":        [{ "matcher": "Bash", "hooks": [{ "type": "command", "if": "Bash(git commit *)", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/_after.sh" }] }],
-"PostToolUseFailure": [{ "matcher": "Bash", "hooks": [{ "type": "command", "if": "Bash(git commit *)", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/_after.sh" }] }]
+"PreToolUse":         [{ "matcher": "Bash", "hooks": [{ "type": "command", "timeout": 600, "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/dispatch" }] }],
+"PostToolUse":        [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/_after.sh" }] }],
+"PostToolUseFailure": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/na/_after.sh" }] }]
 ```
+
+No `if` filter on those entries. `Bash(git commit *)` only matches a command
+that begins with `git commit`, so `git add . && git commit` never reached the
+hook. The scripts read the command themselves, and a call with no commit in
+it exits before any interpreter starts.
 
 ```sh
 # .git/hooks/pre-commit: create it if you have none; otherwise add the last two lines to yours
