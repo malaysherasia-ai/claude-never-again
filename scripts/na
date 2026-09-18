@@ -11,7 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -859,17 +859,14 @@ AGENTS = {
                     "skills": ".agents/skills",
                     "tells": (".agents/hooks.json", ".agents/rules")},
 }
-# Codex, Gemini and Copilot run the command through a shell from the
-# session's working directory, and their docs prefer resolving from the git
-# root over a relative path. Antigravity's docs show a workspace-relative
-# path (./scripts/lint.sh), so its entry is relative and travels with git.
-#
-# On Windows "bash" is the trap: in a process an agent spawns, PATH holds
-# WSL's bash or no bash at all, never Git's. The first Antigravity run on a
-# Windows machine called nothing for exactly that reason. So a Windows host
-# writes Git's bash.exe by its full path, and the script path relative to
-# the repo, which is where these agents run their hooks from.
-GIT_ROOT_EXPR = "$(git rev-parse --show-toplevel)"
+# Where an agent runs a hook from is not ours to assume: Codex and Gemini
+# say the session's directory, Antigravity was seen running from .agents/
+# itself. So no entry depends on it. Each one is "cd to the git root, then
+# run the script", with the root found by git, which works from any
+# directory inside the checkout. On Windows the entry names Git's bash.exe
+# by full path, since a process an agent spawns has WSL's bash on PATH or
+# none at all. The quoting survives cmd, PowerShell, a direct spawn and a
+# Unix shell: only double quotes, escaped where nested.
 WIN_BASH = (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe",
             r"C:\Program Files (x86)\Git\bin\bash.exe")
 
@@ -881,19 +878,27 @@ def _win_bash():
     return None
 
 
+def _entry_cmd(bash, script, agent, powershell=False):
+    """One hook entry: BASH -c 'cd <git root> && exec bash SCRIPT --agent AGENT'.
+    The inner quotes are \" for every runner but PowerShell, whose own
+    escape inside a double-quoted string is a backtick."""
+    q = '`"' if powershell else '\\"'
+    inner = 'cd %s$(git rev-parse --show-toplevel)%s && exec bash .claude/hooks/na/%s --agent %s' % (q, q, script, agent)
+    head = ('& "%s"' % bash) if powershell else (('"%s"' % bash) if "/" in bash else bash)
+    return '%s -c "%s"' % (head, inner)
+
+
 def _agent_cmds(agent):
-    """(pre-tool command, post-tool command) for AGENT. Copilot gets both a
-    bash and a powershell form since its file has a field for each; the
-    others get the form for the host this runs on."""
-    unix_root = 'bash "%s/.claude/hooks/na/%%s" --agent %s' % (GIT_ROOT_EXPR, agent)
-    unix_rel = "bash .claude/hooks/na/%%s --agent %s" % agent
+    """(pre-tool command, post-tool command) for AGENT. Copilot gets a bash
+    and a powershell form since its file has a field for each; the others
+    get the form for the host this runs on."""
     wb = _win_bash() if os.name == "nt" else None
-    win = ('"%s" .claude/hooks/na/%%s --agent %s' % (wb, agent)) if wb else None
     if agent == "copilot":
-        ps = '& "%s" .claude/hooks/na/%%s --agent copilot' % (wb or "C:/Program Files/Git/bin/bash.exe")
-        return ((unix_root % "dispatch", ps % "dispatch"), (unix_root % "_after.sh", ps % "_after.sh"))
-    form = win or (unix_rel if agent == "antigravity" else unix_root)
-    return form % "dispatch", form % "_after.sh"
+        ps_bash = wb or "C:/Program Files/Git/bin/bash.exe"
+        return ((_entry_cmd("bash", "dispatch", agent), _entry_cmd(ps_bash, "dispatch", agent, powershell=True)),
+                (_entry_cmd("bash", "_after.sh", agent), _entry_cmd(ps_bash, "_after.sh", agent, powershell=True)))
+    bash = wb or "bash"
+    return _entry_cmd(bash, "dispatch", agent), _entry_cmd(bash, "_after.sh", agent)
 
 
 def _is_ours(entry):
