@@ -167,6 +167,7 @@ OUTD="$(NA_DRY_RUN=1 dispatch "git commit -m x")"
 check "dispatch asks through the index"   'echo "$OUTD" | grep -q "\"ask\"" && echo "$OUTD" | grep -q "d0.txt"'
 check "dispatch: not a commit, silent"    '[ -z "$(NA_DRY_RUN=1 dispatch "ls")" ]'
 check "chained commit reaches the hook"   'NA_DRY_RUN=1 dispatch "git add . && git commit -m x" | grep -q "\"ask\""'
+check "a byte-order mark is ignored"      'printf "\357\273\277{\"tool_input\":{\"command\":\"git commit -m x\"}}" | NA_DRY_RUN=1 bash .claude/hooks/na/dispatch | grep -q "\"ask\""'
 # A fake interpreter that leaves a mark when started. The probe runs
 # NA_PYTHON first, so a mark means an interpreter was looked for at all.
 printf '#!/bin/sh\ntouch "%s/na-started"; exit 1\n' "$T" > "$T/fakepy"; chmod +x "$T/fakepy"
@@ -692,8 +693,8 @@ mkdir -p .codex
 printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo mine"}]}]}}\n' > .codex/hooks.json
 OUTA="$(bash "$SRC/install.sh" --agent gemini,copilot --agent antigravity . 2>&1)"
 check "codex found by its folder"          'echo "$OUTA" | grep -q "codex: registered"'
-check "codex: own entry kept"              'grep -q "echo mine" .codex/hooks.json && grep -q "dispatch" .codex/hooks.json'
-check "codex: after-hook registered"       'grep -q "_after.sh" .codex/hooks.json'
+check "codex: own entry kept"              'grep -q "echo mine" .codex/hooks.json && grep -q "never-again/launch" .codex/hooks.json'
+check "codex: after-hook registered"       'grep -q "codex --after" .codex/hooks.json'
 check "gemini: BeforeTool + AfterTool"     'grep -q BeforeTool .gemini/settings.json && grep -q AfterTool .gemini/settings.json'
 check "copilot: own file"                  'grep -q preToolUse .github/hooks/never-again.json && grep -q '"'"'"version": 1'"'"' .github/hooks/never-again.json'
 # The entry must work from any directory: Antigravity was seen running it
@@ -702,17 +703,33 @@ check "copilot: own file"                  'grep -q preToolUse .github/hooks/nev
 entry_cmd() { "$PYBIN" -c 'import json,sys
 d = json.load(open(sys.argv[1]))
 c = d[sys.argv[2]] if sys.argv[2] in d else d
-print(next(h["command"] for g in c[sys.argv[3]] for h in g["hooks"] if "hooks/na/" in h["command"]))' "$@"; }
+print(next(h["command"] for g in c[sys.argv[3]] for h in g["hooks"] if "never-again/launch" in h["command"] or "hooks/na/" in h["command"]))' "$@"; }
 AGCMD="$(entry_cmd .agents/hooks.json never-again PreToolUse)"
 CXCMD="$(entry_cmd .codex/hooks.json hooks PreToolUse)"
-check "entries find the root by git"       'echo "$AGCMD" | grep -q "rev-parse --show-toplevel" && echo "$CXCMD" | grep -q "rev-parse --show-toplevel"'
+check "entries run the launcher, hold no path" 'echo "$AGCMD" | grep -q "never-again/launch" && ! echo "$AGCMD" | grep -q "hooks/na" && ! echo "$AGCMD" | grep -q "\$("'
+check "launcher installed"                '[ -x "$HOME/.never-again/launch" ]'
 echo TODO-BLOCK > agdir.txt
 check "antigravity entry runs from .agents/" '(cd .agents && pay antigravity "git commit -m x" | NA_DRY_RUN=1 eval "$AGCMD" | grep -q agdir.txt)'
 check "codex entry runs from a nested dir" '(mkdir -p deep/er && cd deep/er && pay codex "git commit -m x" | NA_DRY_RUN=1 eval "$CXCMD" | grep -q agdir.txt)'
 rm -rf agdir.txt deep
+check "launcher: no cwd in payload, process cwd" 'echo TODO-BLOCK > lc.txt && printf "{\"tool_input\":{\"command\":\"git commit -m x\"}}" | NA_DRY_RUN=1 bash "$HOME/.never-again/launch" --agent codex | grep -q lc.txt; r=$?; rm -f lc.txt; [ $r -eq 0 ]'
+check "launcher: outside a repo, silent"  '[ -z "$(cd "$TMPDIR_ROOT" && printf "{\"tool_input\":{\"command\":\"git commit -m x\"}}" | bash "$HOME/.never-again/launch" --agent codex 2>&1)" ]'
+check "entry with no launcher exits 0"    'HOME="$TMPDIR_ROOT/nohome" bash -c "$(echo "$CXCMD" | sed "s/^\"[^\"]*\" //; s/^bash //; s/^-c //" | sed "s/^\"//; s/\"$//")" </dev/null; [ $? -eq 0 ]'
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
-    check "windows: Git's bash by full path" 'echo "$AGCMD" | grep -q "Git/bin/bash.exe"' ;;
+    check "windows: Git's bash by full path" 'echo "$AGCMD" | grep -q "Git/bin/bash.exe"'
+    # The Copilot powershell field, run by PowerShell 5.1 itself: the quoting
+    # that broke the fourth Antigravity run.
+    PSCMD="$("$PYBIN" -c "import json;print(json.load(open('.github/hooks/never-again.json'))['hooks']['preToolUse'][0]['powershell'])")"
+    echo TODO-BLOCK > ps.txt
+    OUTPS="$(NA_DRY_RUN=1 powershell -NoProfile -Command "'$(pay copilot "git commit -m x")' | $PSCMD" 2>&1)"
+    rm -f ps.txt
+    check "powershell 5.1 runs the copilot entry" 'echo "$OUTPS" | grep -q "\"permissionDecision\": \"ask\"" && echo "$OUTPS" | grep -q ps.txt'
+    echo "$OUTPS" | grep -q ps.txt || { echo "      | HOME=$HOME  launcher: $(ls -la "$HOME/.never-again/launch" 2>&1)"; echo "      | cmd: $PSCMD"; printf '%s
+' "$OUTPS" | head -8 | sed 's/^/      | /'
+      echo TODO-BLOCK > ps.txt
+      powershell -NoProfile -Command "'$(pay copilot "git commit -m x")' | & 'C:/Program Files/Git/bin/bash.exe' -c 'echo HOME=\$HOME PWD=\$PWD; command -v python python3 py; git --version; bash -x ~/.never-again/launch --agent copilot'" 2>&1 | tail -25 | sed 's/^/      | /'
+      rm -f ps.txt; } ;;
 esac
 check "copilot: bash and powershell forms" 'grep -q "\"bash\": \"bash -c" .github/hooks/never-again.json && grep -q "\"powershell\": \"& " .github/hooks/never-again.json'
 "$PYBIN" - <<'PY'
@@ -721,12 +738,12 @@ p = '.codex/hooks.json'
 d = json.load(io.open(p, encoding='utf-8'))
 for g in d['hooks']['PreToolUse']:
     for h in g['hooks']:
-        if 'hooks/na/' in h['command']:
+        if 'never-again/launch --agent codex;' in h['command']:
             h['command'] = 'bash "/old/absolute/.claude/hooks/na/dispatch" --agent codex'
 json.dump(d, io.open(p, 'w', encoding='utf-8'), indent=2)
 PY
 OUTC="$(bash "$SRC/install.sh" . 2>&1)"
-check "a stale entry is rewritten"         'echo "$OUTC" | grep -q "codex: registered" && ! grep -q "/old/absolute/" .codex/hooks.json && [ "$(grep -c "na/dispatch" .codex/hooks.json)" -eq 1 ]'
+check "a stale entry is rewritten"         'echo "$OUTC" | grep -q "codex: registered" && ! grep -q "/old/absolute/" .codex/hooks.json && [ "$(grep -c "agent codex; exit 0" .codex/hooks.json)" -eq 1 ]'
 check "agents remembered in state"         '"$PYBIN" -c "import json,sys; a=json.load(open(sys.argv[1]))[\"agents\"]; sys.exit(0 if a==[\"codex\",\"gemini\",\"copilot\",\"antigravity\"] else 1)" .claude/never-again/state.json'
 check "AGENTS.md has the block"            'grep -q "BEGIN never-again" AGENTS.md'
 check "GEMINI.md has the block"            'grep -q "BEGIN never-again" GEMINI.md'
@@ -735,7 +752,7 @@ check "skill copied for each agent"        '[ -f .agents/skills/never-again/SKIL
 check "block-only files are not notes"     '! echo "$OUTA" | grep -q "AGENTS.md"'
 OUTB="$(bash "$SRC/install.sh" . 2>&1)"
 check "re-run keeps the agents"            '[ "$(echo "$OUTB" | grep -c "already registered in")" -eq 4 ]'
-check "re-run registers once"              '[ "$(grep -c dispatch .codex/hooks.json)" -eq 1 ] && [ "$(grep -c dispatch .gemini/settings.json)" -eq 1 ]'
+check "re-run registers once"              '[ "$(grep -c "agent codex; exit 0" .codex/hooks.json)" -eq 1 ] && [ "$(grep -c "agent gemini; exit 0" .gemini/settings.json)" -eq 1 ]'
 check "backups are ignored"                'git check-ignore -q AGENTS.md.bak && git check-ignore -q .github/copilot-instructions.md.bak'
 check "unknown agent refused"              '! bash "$SRC/install.sh" --agent cursor . >/dev/null 2>&1'
 rm -f .claude/hooks/na/L021.sh

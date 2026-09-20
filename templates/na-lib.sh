@@ -60,7 +60,8 @@ na_payload_vars() {
 import json, sys, shlex
 agent = sys.argv[1]
 try:
-    d = json.load(sys.stdin)
+    # PowerShell 5.1 puts a byte-order mark in front of what it pipes.
+    d = json.loads(sys.stdin.read().lstrip("\ufeff"))
 except Exception:
     d = {}
 if not isinstance(d, dict):

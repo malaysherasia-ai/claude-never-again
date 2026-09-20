@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# never-again launcher. install.sh puts this at ~/.never-again/launch, and the
+# hook entries of Codex, Gemini CLI, Copilot and Antigravity point here:
+#
+#   bash -c "test -f ~/.never-again/launch && exec bash ~/.never-again/launch --agent codex; exit 0"
+#
+# It exists because three things about how an agent runs a hook are not ours
+# to assume. Which directory it runs from: Antigravity uses .agents/ itself.
+# How it quotes: PowerShell 5.1 hands a quoted path to a native program with
+# the quotes stripped, so `cd "C:/…"` arrives in pieces. And which machine:
+# a hook file committed to the repo must not carry one machine's path. So
+# the entry holds no path, no quote and no substitution; this file finds the
+# repo from the payload's own working directory, and is the same on every
+# machine, outside every repo. A missing launcher (a clone whose owner has
+# not run the installer) exits 0 from the entry itself, so an agent that
+# fails closed on a hook error is never locked out.
+#
+#   launch --agent NAME [--after]     --after runs _after.sh instead of dispatch
+set -u
+AGENT=""; SCRIPT=dispatch
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --agent) AGENT="${2:-}"; shift ;;
+    --agent=*) AGENT="${1#--agent=}" ;;
+    --after) SCRIPT=_after.sh ;;
+  esac
+  shift
+done
+
+PAYLOAD="$(cat)"
+
+# The payload's working directory, without an interpreter: "cwd" at the top
+# for Codex, Gemini and Copilot; "Cwd" inside the arguments for Antigravity.
+CWD="$(printf '%s' "$PAYLOAD" | sed -n 's/.*"[cC]wd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+CWD="${CWD//\\\\//}"                       # JSON-escaped backslashes
+[ -n "$CWD" ] && [ -d "$CWD" ] || CWD="$PWD"
+
+ROOT="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)" || ROOT=""
+[ -n "$ROOT" ] || exit 0                                    # not in a repo
+[ -f "$ROOT/.claude/hooks/na/$SCRIPT" ] || exit 0            # not installed here
+
+printf '%s' "$PAYLOAD" | exec bash "$ROOT/.claude/hooks/na/$SCRIPT" --agent "$AGENT"
