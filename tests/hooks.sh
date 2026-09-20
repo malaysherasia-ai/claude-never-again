@@ -723,7 +723,9 @@ case "$(uname -s)" in
     echo TODO-BLOCK > ps.txt
     OUTPS="$(NA_DRY_RUN=1 powershell -NoProfile -Command "'$(pay copilot "git commit -m x")' | $PSCMD" 2>&1)"
     rm -f ps.txt
-    check "powershell 5.1 runs the copilot entry" 'echo "$OUTPS" | grep -q "\"permissionDecision\": \"ask\"" && echo "$OUTPS" | grep -q ps.txt' ;;
+    check "powershell 5.1 runs the copilot entry" 'echo "$OUTPS" | grep -q "\"permissionDecision\": \"ask\"" && echo "$OUTPS" | grep -q ps.txt'
+    echo "$OUTPS" | grep -q ps.txt || { echo "      | HOME=$HOME  launcher: $(ls -la "$HOME/.never-again/launch" 2>&1)"; echo "      | cmd: $PSCMD"; printf '%s
+' "$OUTPS" | head -8 | sed 's/^/      | /'; } ;;
 esac
 check "copilot: bash and powershell forms" 'grep -q "\"bash\": \"bash -c" .github/hooks/never-again.json && grep -q "\"powershell\": \"& " .github/hooks/never-again.json'
 "$PYBIN" - <<'PY'
