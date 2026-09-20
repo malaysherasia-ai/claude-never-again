@@ -27,7 +27,9 @@ would have run nothing.
 - Uninstall lists the launcher as kept, since other repos on the machine
   share it.
 - On Windows CI the Copilot powershell entry is now run by PowerShell 5.1
-  itself, with a payload on stdin, and must answer.
+  itself, with a payload on stdin, and must answer. That run found one more
+  thing: PowerShell 5.1 puts a byte-order mark in front of what it pipes,
+  which made the payload unreadable. A leading mark is now ignored.
 
 ## [1.4.1] — 2026-09-18
 

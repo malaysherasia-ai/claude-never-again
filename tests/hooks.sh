@@ -167,6 +167,7 @@ OUTD="$(NA_DRY_RUN=1 dispatch "git commit -m x")"
 check "dispatch asks through the index"   'echo "$OUTD" | grep -q "\"ask\"" && echo "$OUTD" | grep -q "d0.txt"'
 check "dispatch: not a commit, silent"    '[ -z "$(NA_DRY_RUN=1 dispatch "ls")" ]'
 check "chained commit reaches the hook"   'NA_DRY_RUN=1 dispatch "git add . && git commit -m x" | grep -q "\"ask\""'
+check "a byte-order mark is ignored"      'printf "\357\273\277{\"tool_input\":{\"command\":\"git commit -m x\"}}" | NA_DRY_RUN=1 bash .claude/hooks/na/dispatch | grep -q "\"ask\""'
 # A fake interpreter that leaves a mark when started. The probe runs
 # NA_PYTHON first, so a mark means an interpreter was looked for at all.
 printf '#!/bin/sh\ntouch "%s/na-started"; exit 1\n' "$T" > "$T/fakepy"; chmod +x "$T/fakepy"
