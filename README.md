@@ -330,11 +330,16 @@ Things to know:
   dispatcher always answers on that path, even when it has nothing to say.
 - **Antigravity reads its hook file at startup.** Restart it after the
   installer, then ask it "which hooks are installed?" to confirm.
-- **Every entry finds the repo itself.** Each one is "cd to the git root,
-  then run the script", so it does not matter which directory the agent
-  runs hooks from: Antigravity was seen using `.agents/` itself. On Windows
-  the entry names Git's `bash.exe` by its full path, because a process an
-  agent spawns has WSL's bash on PATH, or none; never Git's.
+- **The entries hold no path, no quote and no substitution.** Each one runs
+  `~/.never-again/launch`, a small launcher the installer puts outside every
+  repo, which finds the repo from the payload's own working directory. Three
+  things made that necessary: Antigravity runs hooks from `.agents/` itself;
+  PowerShell 5.1 strips the quotes off a path it hands to a native program;
+  and a committed hook file must not carry one machine's path. A clone whose
+  owner has not run the installer has no launcher, and the entry exits clean
+  rather than failing closed. On Windows the entry names Git's `bash.exe` by
+  its full path, because a process an agent spawns has WSL's bash on PATH,
+  or none; never Git's.
 - **Did the agent call the hook at all?** `.claude/never-again/calls.log`
   gets one line per commit the dispatcher saw, with the agent's name and
   whether anything fired. Local, gitignored. If a commit went through and
@@ -396,6 +401,7 @@ AGENTS.md, GEMINI.md,
   .github/hooks/never-again.json    two entries each, only for the agents you registered
 .agents/skills/, .gemini/skills/,
   .github/skills/                   the skill, copied for that agent
+~/.never-again/launch               outside the repo: what those entries run; same on every machine
 .git/hooks/pre-commit               a short stub, only if you had none; pre-merge-commit likewise
 .claude/never-again/
   ├── na                            the stats command  (na.cmd for PowerShell)

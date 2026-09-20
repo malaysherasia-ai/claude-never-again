@@ -11,7 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -859,14 +859,17 @@ AGENTS = {
                     "skills": ".agents/skills",
                     "tells": (".agents/hooks.json", ".agents/rules")},
 }
-# Where an agent runs a hook from is not ours to assume: Codex and Gemini
-# say the session's directory, Antigravity was seen running from .agents/
-# itself. So no entry depends on it. Each one is "cd to the git root, then
-# run the script", with the root found by git, which works from any
-# directory inside the checkout. On Windows the entry names Git's bash.exe
-# by full path, since a process an agent spawns has WSL's bash on PATH or
-# none at all. The quoting survives cmd, PowerShell, a direct spawn and a
-# Unix shell: only double quotes, escaped where nested.
+# Three things about how an agent runs a hook are not ours to assume: the
+# directory (Antigravity uses .agents/ itself), the quoting (PowerShell 5.1
+# strips the quotes off a path it hands to a native program), and the
+# machine (a committed hook file must not carry one machine's path). So the
+# entry holds none of those. It runs ~/.never-again/launch, a launcher the
+# installer puts outside every repo, which finds the repo from the payload's
+# own working directory. A missing launcher exits 0 from the entry itself,
+# so an agent that fails closed on hook errors is never locked out. On
+# Windows the entry names Git's bash.exe by full path, since a process an
+# agent spawns has WSL's bash on PATH or none at all.
+LAUNCH = "~/.never-again/launch"
 WIN_BASH = (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe",
             r"C:\Program Files (x86)\Git\bin\bash.exe")
 
@@ -878,12 +881,9 @@ def _win_bash():
     return None
 
 
-def _entry_cmd(bash, script, agent, powershell=False):
-    """One hook entry: BASH -c 'cd <git root> && exec bash SCRIPT --agent AGENT'.
-    The inner quotes are \" for every runner but PowerShell, whose own
-    escape inside a double-quoted string is a backtick."""
-    q = '`"' if powershell else '\\"'
-    inner = 'cd %s$(git rev-parse --show-toplevel)%s && exec bash .claude/hooks/na/%s --agent %s' % (q, q, script, agent)
+def _entry_cmd(bash, agent, after=False, powershell=False):
+    """One hook entry. No quote, no $(...), no path inside the -c script."""
+    inner = "test -f %s && exec bash %s --agent %s%s; exit 0" % (LAUNCH, LAUNCH, agent, " --after" if after else "")
     head = ('& "%s"' % bash) if powershell else (('"%s"' % bash) if "/" in bash else bash)
     return '%s -c "%s"' % (head, inner)
 
@@ -895,15 +895,16 @@ def _agent_cmds(agent):
     wb = _win_bash() if os.name == "nt" else None
     if agent == "copilot":
         ps_bash = wb or "C:/Program Files/Git/bin/bash.exe"
-        return ((_entry_cmd("bash", "dispatch", agent), _entry_cmd(ps_bash, "dispatch", agent, powershell=True)),
-                (_entry_cmd("bash", "_after.sh", agent), _entry_cmd(ps_bash, "_after.sh", agent, powershell=True)))
+        return ((_entry_cmd("bash", agent), _entry_cmd(ps_bash, agent, powershell=True)),
+                (_entry_cmd("bash", agent, after=True), _entry_cmd(ps_bash, agent, after=True, powershell=True)))
     bash = wb or "bash"
-    return _entry_cmd(bash, "dispatch", agent), _entry_cmd(bash, "_after.sh", agent)
+    return _entry_cmd(bash, agent), _entry_cmd(bash, agent, after=True)
 
 
 def _is_ours(entry):
     for key in ("command", "bash", "powershell"):
-        if "hooks/na/" in str((entry or {}).get(key, "")).replace("\\", "/"):
+        v = str((entry or {}).get(key, "")).replace("\\", "/")
+        if "hooks/na/" in v or ".never-again/launch" in v:
             return True
     return False
 
@@ -1612,7 +1613,7 @@ def uninstall(argv):
                 text = open(cfg, encoding="utf-8").read()
             except OSError:
                 text = ""
-            if "hooks/na/" in text.replace("\\", "/"):
+            if "hooks/na/" in text.replace("\\", "/") or ".never-again/launch" in text:
                 edits.append((spec["config"], "remove the never-again hook entries, keep the rest"))
         rules = os.path.join(ROOT, *spec["rules"].split("/"))
         if rules not in [r for r, _ in agent_rules] and os.path.isfile(rules):
@@ -1627,6 +1628,9 @@ def uninstall(argv):
             agent_skills.append((sk, spec["skills"] + "/never-again/"))
             removals.append((spec["skills"] + "/never-again/", "%d file(s)" % _count(sk), sk))
 
+    launcher = os.path.expanduser(LAUNCH)
+    if os.path.isfile(launcher):
+        keeps.append(("~/.never-again/launch", "shared by every repo on this machine; delete it yourself when none uses never-again"))
     if os.path.isfile(lessons):
         keeps.append(("LESSONS.md", "your rules outlive the tool; delete it yourself if you want it gone"))
     backup = claude_md + ".bak"

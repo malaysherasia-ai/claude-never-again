@@ -2,6 +2,33 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.5.0] — 2026-09-18
+
+From the fourth Antigravity run, which also settled that the Antigravity
+IDE on that Windows machine runs no PreToolUse hook at all: a canary hook
+never fired either. That one is Google's; the git side guards there. But
+the same run showed a bug of ours: PowerShell 5.1 strips the quotes off a
+path it hands to a native program, so `cd "C:/…"` arrived in pieces. Any
+agent that spawns hooks through PowerShell on Windows, Copilot among them,
+would have run nothing.
+
+### Changed
+
+- **Agent entries run a launcher instead of carrying a path.** The
+  installer puts `~/.never-again/launch` outside every repo; each entry is
+  `bash -c "test -f ~/.never-again/launch && exec bash ~/.never-again/launch --agent X; exit 0"`.
+  No quote, no `$(…)`, no machine path inside, so it survives cmd,
+  PowerShell 5.1, a direct spawn and a Unix shell alike, and a committed
+  hook file stays the same on every machine. The launcher finds the repo
+  from the payload's working directory, with the process directory as the
+  fallback. A missing launcher exits 0 from the entry itself, so an agent
+  that fails closed on hook errors is never locked out. Entries from
+  earlier releases are rewritten in place.
+- Uninstall lists the launcher as kept, since other repos on the machine
+  share it.
+- On Windows CI the Copilot powershell entry is now run by PowerShell 5.1
+  itself, with a payload on stdin, and must answer.
+
 ## [1.4.1] — 2026-09-18
 
 From the third Antigravity run: the IDE runs a hook with `.agents/` as its

@@ -185,6 +185,14 @@ JSON
   echo "  state      state.json created (promotion by pull request; see docs/TEAMS.md)"
 fi
 
+# --- the launcher other agents' entries run ------------------------------------
+# Outside every repo, the same on every machine. The entries hold no path,
+# no quote and no substitution; this finds the repo from the payload.
+mkdir -p "$HOME/.never-again"
+cp "$SRC/templates/launch" "$HOME/.never-again/launch"
+chmod +x "$HOME/.never-again/launch"
+echo "  launcher   ~/.never-again/launch  (what Codex, Gemini, Copilot and Antigravity entries run)"
+
 # --- other agents ---------------------------------------------------------------
 # Codex, Gemini CLI, Copilot and Antigravity. Named with --agent, or found by
 # their folders. Remembered in state.json so a re-run keeps them.
