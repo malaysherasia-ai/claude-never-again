@@ -725,7 +725,10 @@ case "$(uname -s)" in
     rm -f ps.txt
     check "powershell 5.1 runs the copilot entry" 'echo "$OUTPS" | grep -q "\"permissionDecision\": \"ask\"" && echo "$OUTPS" | grep -q ps.txt'
     echo "$OUTPS" | grep -q ps.txt || { echo "      | HOME=$HOME  launcher: $(ls -la "$HOME/.never-again/launch" 2>&1)"; echo "      | cmd: $PSCMD"; printf '%s
-' "$OUTPS" | head -8 | sed 's/^/      | /'; } ;;
+' "$OUTPS" | head -8 | sed 's/^/      | /'
+      echo TODO-BLOCK > ps.txt
+      powershell -NoProfile -Command "'$(pay copilot "git commit -m x")' | & 'C:/Program Files/Git/bin/bash.exe' -c 'echo HOME=\$HOME PWD=\$PWD; command -v python python3 py; git --version; bash -x ~/.never-again/launch --agent copilot'" 2>&1 | tail -25 | sed 's/^/      | /'
+      rm -f ps.txt; } ;;
 esac
 check "copilot: bash and powershell forms" 'grep -q "\"bash\": \"bash -c" .github/hooks/never-again.json && grep -q "\"powershell\": \"& " .github/hooks/never-again.json'
 "$PYBIN" - <<'PY'
