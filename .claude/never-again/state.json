@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "nextId": 1,
+  "cap": 40,
+  "loadedWarn": 60,
+  "tokensPerPreventedRepeat": 8000,
+  "promotion": "pull-request",
+  "updates": "check",
+  "capture": "warn",
+  "lessons": {}
+}

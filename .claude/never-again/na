@@ -1,0 +1,1896 @@
+#!/bin/sh
+""":"
+# Re-exec under a Python that actually runs. `env python3` finds the Microsoft
+# Store stub on Windows, which exits without running anything.
+for c in ${NA_PYTHON:-} python3 python py; do
+  # Existence is not the test — run a statement and require exit 0.
+  if "$c" -c 'import sys' >/dev/null 2>&1; then
+    exec "$c" "$0" "$@"
+  fi
+done
+echo "never-again: no working python found" >&2
+exit 1
+":"""
+VERSION = "1.6.0"
+USAGE = """na — never-again local CLI.
+
+Everything here is counted, not reasoned. It costs no tokens by design.
+
+  na              stats, including loaded rule density for the current directory
+  na sort         reorder rule lines by fire count (most-hit first) in each LESSONS.md
+  na uninstall    remove never-again from this repo (--yes to skip the prompt)
+  na upgrade      fetch the newest release and re-run its installer here;
+                  a newer release is noticed once a day after a commit and
+                  named on the next one ("updates": "off" in state.json stops that)
+                  (--check only looks; --yes skips the prompt; --from DIR|TARBALL
+                  installs from a local copy instead of GitHub)
+  na ok      L017 the latest fire was right      (grades that fire; counts toward promotion)
+  na wrong   L017 the latest fire was a false positive (grades it; streak resets)
+  na promote L017 warn -> block
+  na demote  L017 block -> warn
+  na retire  L017 remove the rule line and deregister the hook; keep the archive
+  na why     L017 print the full story
+  na none [why]   the next commit is a fix with nothing to learn: the capture
+                  check stays quiet for it ("capture": "off" in state.json
+                  turns the check off for good; "block" makes it refuse)
+  na import       list the notes files already in this repo that the skill can
+                  turn into lessons, and what has been imported so far
+  na import --mark PATH [--filed N]   record that PATH was imported
+  na index        every live hook with its mode, trigger and watched extensions,
+                  which is what the dispatcher runs from
+
+Fires are recorded by the hooks themselves. What happened next is recorded too:
+"declined" when the person stopped at the warning, "proceeded" when they went
+ahead anyway, "blocked" in block mode. A declined fire counts as correct on its
+own; use `na ok` / `na wrong` to say otherwise, or to grade a proceeded one.
+"""
+import json
+import os
+import re
+import sys
+import time
+from collections import Counter
+
+# Windows consoles default to cp1252, which cannot encode the box-drawing and
+# em-dash characters used below, and files default to the same codec.
+if hasattr(sys.stdout, "reconfigure"):
+    # newline="\n": shell callers split our output on "\n", and a text-mode
+    # stdout on Windows would otherwise glue a "\r" to every last field.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+ROOT = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+while not os.path.isdir(os.path.join(ROOT, ".claude", "never-again")):
+    parent = os.path.dirname(ROOT)
+    if parent == ROOT:
+        sys.exit("never-again is not installed here. Run install.sh first.")
+    ROOT = parent
+
+BASE = os.path.join(ROOT, ".claude", "never-again")
+STATE = os.path.join(BASE, "state.json")
+FIRES = os.path.join(BASE, "fires.log")
+ARCHIVE = os.path.join(BASE, "archive")
+VERIFIED = os.path.join(BASE, "verified")
+HOOKS = os.path.join(ROOT, ".claude", "hooks", "na")
+SETTINGS = os.path.join(ROOT, ".claude", "settings.json")
+
+# A fire that is still "pending" this long after it was written, with no tool
+# call having run afterwards, is one the person declined at the prompt.
+SETTLE_AFTER_S = 120
+PROMOTE_AT = 5
+
+
+def load():
+    with open(STATE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save(state):
+    with open(STATE, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+        f.write("\n")
+
+
+MARKER = "managed by the never-again skill"
+
+
+def managed(path):
+    """The root LESSONS.md is always the tool's: the installer said so, and the
+    skill appends there. Any other LESSONS.md in the tree is only ours if it
+    carries the template's marker comment. A project's own docs/LESSONS.md in
+    some other format must never be counted, sorted or edited."""
+    if os.path.dirname(os.path.abspath(path)) == os.path.abspath(ROOT):
+        return True
+    rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
+    if rel in _lesson_named_files():
+        return True
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return MARKER in f.read(4096)     # the marker sits in the header
+    except OSError:
+        return False
+
+
+_NAMED = None
+
+
+def _lesson_named_files():
+    """Files that lesson records say they were filed into. A package file
+    written without the marker is still ours if a lesson points at it."""
+    global _NAMED
+    if _NAMED is None:
+        _NAMED = set()
+        try:
+            for v in load().get("lessons", {}).values():
+                f = v.get("file")
+                if isinstance(f, str) and f:
+                    _NAMED.add(f.replace("\\", "/"))
+        except (OSError, ValueError):
+            pass
+    return _NAMED
+
+
+_FILES = None
+
+
+def lesson_files():
+    """Managed LESSONS.md files, walked once per run."""
+    global _FILES
+    if _FILES is not None:
+        return _FILES
+    out = []
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames
+                       if d not in (".git", "node_modules", ".claude", "dist", "build")]
+        if "LESSONS.md" in filenames:
+            p = os.path.join(dirpath, "LESSONS.md")
+            if managed(p):
+                out.append(p)
+    _FILES = out
+    return out
+
+
+def loaded_files(cwd=None):
+    """The LESSONS.md files Claude actually sees from a working directory:
+    the root file plus the nearest one at or above cwd inside the repo."""
+    # realpath on both: on macOS /tmp is a symlink to /private/tmp, and the
+    # working directory comes back resolved while ROOT does not.
+    cwd = os.path.normcase(os.path.realpath(cwd or os.getcwd()))
+    root = os.path.normcase(os.path.realpath(ROOT))
+    root_file = os.path.join(ROOT, "LESSONS.md")
+    out = [root_file] if os.path.exists(root_file) else []
+    d = cwd
+    while d.startswith(root) and d != root:
+        f = os.path.join(d, "LESSONS.md")
+        if os.path.exists(f) and f not in out and managed(f):
+            out.append(f)
+            break
+        d = os.path.dirname(d)
+    return out
+
+
+RULE_RE = re.compile(r"^\s*-\s+\[(?P<scope>[^\]]+)\]\s+(?P<text>.+?)\s*\((?P<id>L\d+)\)\s*$")
+
+
+def rules(paths=None):
+    found = []
+    for path in (paths if paths is not None else lesson_files()):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                m = RULE_RE.match(line)
+                if m:
+                    found.append((os.path.relpath(path, ROOT), m.group("id"),
+                                  m.group("scope"), m.group("text")))
+    return found
+
+
+# ---------------------------------------------------------------------------
+# fires.log
+#
+# One line per fire, tab separated:
+#   ts  id  mode  source  outcome  grade  ref
+#   source   claude | git
+#   outcome  pending | proceeded | declined | blocked
+#   grade    - | ok | wrong
+#   ref      the Claude Code tool_use_id when the payload carried one, else -
+#   tree     a fingerprint of the working tree at the fire, so a second look
+#            at the same commit (git after Claude Code) can be told from a
+#            new commit after a fix
+# Lines from before this format (ts, id, mode) still parse; their outcome is
+# unknown and shown as "-".
+# ---------------------------------------------------------------------------
+
+COLS = ("ts", "id", "mode", "source", "outcome", "grade", "ref", "tree")
+
+
+def parse_ts(ts):
+    """UTC timestamp to epoch seconds. mktime() minus time.timezone was wrong
+    by an hour during daylight saving, which made every fresh fire look stale
+    and settled it as declined before the after-commit hook could mark it."""
+    import calendar
+    try:
+        return calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
+    except Exception:
+        return 0
+
+
+def now_ts():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def read_log():
+    if not os.path.exists(FIRES):
+        return []
+    rows = []
+    with open(FIRES, encoding="utf-8") as f:
+        for ln in f:
+            ln = ln.rstrip("\n")
+            if not ln.strip():
+                continue
+            parts = ln.split("\t")
+            row = dict(zip(COLS, parts + ["-"] * (len(COLS) - len(parts))))
+            if len(parts) < 4:
+                row["source"] = "claude"
+            rows.append(row)
+    return rows
+
+
+def write_log(rows):
+    os.makedirs(BASE, exist_ok=True)
+    with open(FIRES, "w", encoding="utf-8", newline="\n") as f:
+        for r in rows:
+            f.write("\t".join(r.get(c, "-") or "-" for c in COLS) + "\n")
+
+
+def settle(rows, lid=None, age=SETTLE_AFTER_S):
+    """Pending fires nobody proceeded past are declined fires. A pending fire
+    for the same hook is settled at once: the hook firing again means the
+    previous attempt did not go through. Others only once they are stale, so
+    two hooks firing on the same call do not settle each other."""
+    now = time.time()
+    changed = False
+    for r in rows:
+        if r["outcome"] != "pending":
+            continue
+        if (lid and r["id"] == lid) or now - parse_ts(r["ts"]) > age:
+            r["outcome"] = "declined"
+            changed = True
+    return changed
+
+
+def streak(rows, lid):
+    """Consecutive correct fires: an explicit ok, or an ungraded declined fire.
+    A wrong grade resets it. Proceeded fires count only when graded."""
+    n = 0
+    for r in rows:
+        if r["id"] != lid:
+            continue
+        if r["grade"] == "wrong":
+            n = 0
+        elif r["grade"] == "ok" or (r["grade"] == "-" and r["outcome"] == "declined"):
+            n += 1
+    return n
+
+
+def tree_fingerprint():
+    """What is about to be committed, cheaply: every changed or untracked
+    path with its size and mtime. Same tree, same fingerprint; a fix changes
+    it. "-" when git cannot answer."""
+    import hashlib
+    import subprocess
+    try:
+        p = subprocess.run(["git", "-C", ROOT, "status", "--porcelain=v1", "-uall"],
+                           capture_output=True, text=True)
+    except OSError:
+        return "-"
+    if p.returncode != 0:
+        return "-"
+    # Paths and their bytes, not their staging state: Claude's `git add -A &&
+    # git commit` stages between the PreToolUse fire and the git hook, and
+    # that is still the same commit.
+    h = hashlib.sha256()
+    for line in sorted(p.stdout.splitlines()):
+        path = line[3:].split(" -> ")[-1]
+        full = os.path.join(ROOT, path)
+        try:
+            st = os.stat(full)
+            h.update(("%s\t%d\t%d\n" % (path, st.st_size, st.st_mtime_ns)).encode("utf-8"))
+        except OSError:
+            h.update((path + "\tgone\n").encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+def cmd_fired(lid, mode, source, ref):
+    rows = read_log()
+    settle(rows, lid=lid)
+    if mode == "block":
+        outcome = "blocked"
+    elif source == "git":
+        outcome = "proceeded"      # git warn mode cannot stop the commit
+    else:
+        outcome = "pending"
+    rows.append({"ts": now_ts(), "id": lid, "mode": mode, "source": source,
+                 "outcome": outcome, "grade": "-", "ref": ref or "-",
+                 "tree": tree_fingerprint()})
+    write_log(rows)
+    return 0
+
+
+def cmd_proceeded(argv):
+    """The tool call ran, so whoever saw the prompt chose to go on."""
+    ref = None
+    lid = None
+    only_if_pending = "--if-pending" in argv
+    same_tree = "--same-tree" in argv
+    if "--tool-use-id" in argv:
+        ref = argv[argv.index("--tool-use-id") + 1]
+    if "--id" in argv:
+        lid = argv[argv.index("--id") + 1]
+    rows = read_log()
+    # A fire nobody proceeded past for a while is a decline; settle those
+    # first so an old declined fire can never be mistaken for this commit.
+    if settle(rows):
+        write_log(rows)
+    pending = [r for r in rows if r["outcome"] == "pending" and (not lid or r["id"] == lid)]
+    if same_tree:
+        tree = tree_fingerprint()
+        pending = [r for r in pending if r.get("tree") == tree and tree != "-"]
+    if ref:
+        matched = [r for r in pending if r["ref"] == ref]
+        # A payload without ids on the PreToolUse side leaves ref "-"; then
+        # the pending set is the best answer available.
+        pending = matched or [r for r in pending if r["ref"] == "-"]
+    if not pending:
+        return 1 if only_if_pending else 0
+    for r in pending:
+        r["outcome"] = "proceeded"
+    write_log(rows)
+    return 0
+
+
+def fires():
+    rows = read_log()
+    if settle(rows):
+        write_log(rows)
+    return rows
+
+
+def bar(n, total, width=18):
+    if not total:
+        return ""
+    filled = max(1, round(width * n / total)) if n else 0
+    return "█" * filled + "·" * (width - filled)
+
+
+def stats():
+    state = load()
+    rs = rules()
+    fr = fires()
+    # The capture check is not a lesson: its fires are counted on their own
+    # line, never toward a streak or the prevented total.
+    nudges = [r for r in fr if r["id"] == CAPTURE_ID]
+    fr = [r for r in fr if r["id"] != CAPTURE_ID]
+    lessons = state.get("lessons", {})
+    hooks = {k: v for k, v in lessons.items() if v.get("form") == "hook"}
+    blocking = [k for k, v in hooks.items() if v.get("mode") == "block"]
+    warning = [k for k, v in hooks.items() if v.get("mode") == "warn"]
+    cap = state.get("cap", 40)
+    warn_at = state.get("loadedWarn", 60)
+    per = state.get("tokensPerPreventedRepeat", 8000)
+    loaded = rules(loaded_files())
+
+    print()
+    print("  never-again")
+    print("  " + "-" * 46)
+    print(f"  rules           {len(rs)} across {len(lesson_files())} file{'s' if len(lesson_files()) != 1 else ''}  (cap {cap} per file)")
+    print(f"  loaded here     {len(loaded)}  " + ("!" if len(loaded) > warn_at else "") + f"(warn above {warn_at})")
+    print(f"  hooks           {len(hooks)}  ({len(blocking)} blocking, {len(warning)} warn)")
+    rule_only = len(lessons) - len(hooks)
+    if rule_only:
+        print(f"  rule-only       {rule_only}  (judgement calls, no script)")
+    print(f"  hook fires      {len(fr)}")
+
+    blocked = [r for r in fr if r["outcome"] == "blocked"]
+    declined = [r for r in fr if r["outcome"] == "declined"]
+    proceeded = [r for r in fr if r["outcome"] == "proceeded"]
+    prevented = len(blocked) + len(declined)
+    print()
+    print(f"  prevented       {prevented}  ({len(blocked)} denied, {len(declined)} declined at the prompt)")
+    print(f"  warned past     {len(proceeded)}  (asked, and the person went ahead)")
+    print(f"  est. tokens     ~{prevented * per:,} saved")
+    print(f"                  (at {per:,}/repeat — edit in state.json)")
+    capture = state.get("capture", "warn")
+    if capture == "off":
+        print("  capture         off  (a fix committed with no lesson is not noticed)")
+    else:
+        stopped = sum(1 for r in nudges if r["outcome"] in ("declined", "blocked"))
+        went = sum(1 for r in nudges if r["outcome"] == "proceeded")
+        print(f"  capture nudges  {len(nudges)}  (a fix committed with no lesson filed:"
+              f" {stopped} stopped, {went} went ahead)")
+
+    if fr:
+        print()
+        print("  per hook        fires  denied  declined  proceeded  ok  wrong  streak")
+        for lid in sorted({r["id"] for r in fr}):
+            mine = [r for r in fr if r["id"] == lid]
+            c = Counter(r["outcome"] for r in mine)
+            g = Counter(r["grade"] for r in mine)
+            print(f"    {lid:<10}  {len(mine):>5}  {c['blocked']:>6}  {c['declined']:>8}  {c['proceeded']:>9}"
+                  f"  {g['ok']:>2}  {g['wrong']:>5}  {streak(fr, lid):>6}")
+        counts = Counter(r["id"] for r in fr)
+        print()
+        print("  most-hit")
+        top = counts.most_common(5)
+        mx = top[0][1]
+        for lid, n in top:
+            label = next((t for _, i, _, t in rs if i == lid), lid)
+            label = label[:38] + ("…" if len(label) > 38 else "")
+            print(f"    {lid}  {bar(n, mx)}  {n:>3}  {label}")
+
+    ready = [k for k, v in hooks.items()
+             if v.get("mode") == "warn" and streak(fr, k) >= PROMOTE_AT]
+    if ready:
+        print()
+        print("  ready to promote: " + ", ".join(sorted(ready)))
+        print("    na promote " + sorted(ready)[0])
+
+    over = [p for p in lesson_files() if len(rules([p])) >= cap]
+    if over:
+        print()
+        for p in over:
+            print(f"  ! {os.path.relpath(p, ROOT)} is at cap — retire or promote one before adding another")
+    if len(loaded) > warn_at:
+        print()
+        print(f"  ! {len(loaded)} rules load on every turn from this directory.")
+        print(f"    Compliance falls as the list grows. Split by package, retire, or promote.")
+    print()
+
+
+CAPTURE_ID = "capture"
+CAPTURE_NONE = os.path.join(BASE, ".capture-none")
+FIX_RE = re.compile(r"\b(fix|fixes|fixed|fixing|bugfix|hotfix|bug|bugs|revert|reverts|reverted"
+                    r"|regression|broke|broken|workaround)\b", re.I)
+TYPO_RE = re.compile(r"\btypos?\b", re.I)
+
+
+def commit_message(cmd):
+    """The -m text of the git commit in a shell command, or "" when there is
+    none (an editor, a -F file). Lives here rather than in the hook because
+    bash 3.2 on macOS cannot parse a quoted heredoc inside $(...)."""
+    m = re.search(r"(^|[;&|(]|then |do |exec |sudo )\s*git(\s+(-[cC]\s+\S+|--?[A-Za-z-]+(=\S+)?))*\s+commit(?=\s|$)", cmd)
+    if not m:
+        return ""
+    rest = cmd[m.end():]
+    # The commit's own arguments end at the first chain operator outside
+    # quotes, so a `&& git push origin fix/thing` after it is not the message.
+    out, q, i = [], None, 0
+    while i < len(rest):
+        c = rest[i]
+        if q:
+            if c == "\\" and q == '"':
+                out.append(rest[i:i + 2]); i += 2; continue
+            if c == q:
+                q = None
+            out.append(c)
+        elif c in ('"', "'"):
+            q = c; out.append(c)
+        elif c == "\\":
+            out.append(rest[i:i + 2]); i += 2; continue
+        elif rest.startswith(("&&", "||"), i) or c in ";|":
+            break
+        else:
+            out.append(c)
+        i += 1
+    args = "".join(out)
+    parts = re.findall(r'(?:^|\s)(?:-[a-zA-Z]*m|--message)[=\s]+("(?:[^"\\]|\\.)*"|\'[^\']*\'|\S+)', args)
+    return " ".join(parts)
+
+
+def looks_like_fix(msg):
+    """A fix by its own account. "typo" is the one word that says "not worth
+    a lesson" on its own; everything else is for the person to decide."""
+    return bool(FIX_RE.search(msg)) and not TYPO_RE.search(msg)
+
+
+def cmd_none(argv):
+    """`na none [why]`: the next commit is a fix with nothing worth a lesson.
+    Records HEAD; the capture check stays quiet while HEAD is that commit,
+    so the mark clears by itself once the commit lands."""
+    head = _git("rev-parse", "HEAD") or "initial"
+    why = " ".join(a for a in argv if not a.startswith("-")).strip()
+    os.makedirs(BASE, exist_ok=True)
+    with open(CAPTURE_NONE, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(head + "\n" + why + "\n")
+    print("capture: nothing to learn from the next commit"
+          + (" (%s)" % why if why else "") + ". The mark clears once it lands.")
+    return 0
+
+
+def mark(lid, correct):
+    state = load()
+    entry = state.get("lessons", {}).get(lid)
+    if not entry:
+        sys.exit(f"{lid} not found in state.json")
+    rows = fires()
+    ungraded = [r for r in rows if r["id"] == lid and r["grade"] == "-"]
+    if not ungraded:
+        sys.exit(f"{lid} has no ungraded fire. Grades attach to real fires; "
+                 f"there is nothing to grade until the hook fires.")
+    row = ungraded[-1]
+    row["grade"] = "ok" if correct else "wrong"
+    write_log(rows)
+    n = streak(rows, lid)
+    what = f"{row['ts']} ({row['outcome']})"
+    if correct:
+        print(f"{lid}: graded {what} correct  -> streak {n}"
+              + (f"  -> ready: na promote {lid}" if n >= PROMOTE_AT and entry.get("mode") == "warn" else ""))
+    else:
+        print(f"{lid}: graded {what} a false positive, streak reset. Narrow the check before promoting.")
+
+
+def _git(*args):
+    import subprocess
+    try:
+        p = subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True)
+        return p.stdout.strip() if p.returncode == 0 else ""
+    except OSError:
+        return ""
+
+
+def promotion_allowed(state):
+    """Who may change a hook's mode, per state.json "promotion":
+    "pull-request" (default): not on the default branch of a repo with a remote;
+    "anyone": always; a list: only a git identity in the list.
+    Returns (ok, reason)."""
+    rule = state.get("promotion", "pull-request")
+    if rule == "anyone":
+        return True, ""
+    if isinstance(rule, list):
+        me = {_git("config", "user.name"), _git("config", "user.email")} - {""}
+        if me & set(rule):
+            return True, ""
+        return False, ("promotion is limited to %s in state.json; you are %s"
+                       % (", ".join(rule), ", ".join(sorted(me)) or "unknown to git"))
+    # pull-request
+    if not _git("remote"):
+        return True, ""                       # no remote: nothing to review through
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+    head = _git("symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    default = head.split("/", 1)[-1] if head else ""
+    if branch and branch != "HEAD" and branch not in {default, "main", "master"}:
+        return True, "this becomes team-wide when the branch is merged"
+    return False, ("promotion is by pull request here (state.json \"promotion\"). "
+                   "Make a branch, run this there, and open a pull request; "
+                   "or set \"promotion\": \"anyone\" for a single-person repo")
+
+
+def set_mode(lid, mode):
+    state = load()
+    entry = state.get("lessons", {}).get(lid)
+    if not entry:
+        sys.exit(f"{lid} not found in state.json")
+    ok, note = promotion_allowed(state)
+    if not ok:
+        sys.exit(f"{lid} not changed: {note}")
+    entry["mode"] = mode
+    save(state)
+    print(f"{lid} is now {mode}" + (f"  ({note})" if note else ""))
+
+
+def _settings_hooks(settings, match=None):
+    """Every never-again hook entry in a settings dict, as (event, group, entry).
+    With `match`, only entries whose command contains it."""
+    found = []
+    for event, groups in (settings.get("hooks") or {}).items():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            for entry in (group or {}).get("hooks", []) or []:
+                cmd = (entry or {}).get("command", "").replace("\\", "/")
+                if "/.claude/hooks/na/" in cmd and (match is None or match in cmd):
+                    found.append((event, group, entry))
+    return found
+
+
+def _drop_settings_entries(settings, entries):
+    for _event, group, entry in entries:
+        group["hooks"].remove(entry)
+    # Drop containers that only existed to hold our entries. Anything the
+    # user put here stays, including an empty object they wrote themselves.
+    for event, groups in list((settings.get("hooks") or {}).items()):
+        settings["hooks"][event] = [g for g in groups if g.get("hooks")]
+        if not settings["hooks"][event]:
+            del settings["hooks"][event]
+    if not settings.get("hooks"):
+        settings.pop("hooks", None)
+
+
+def _write_settings(settings):
+    with open(SETTINGS, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(settings, fh, indent=2)
+        fh.write("\n")
+
+
+def retire(lid):
+    removed = 0
+    for path in lesson_files():
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+        keep = [ln for ln in lines if f"({lid})" not in ln]
+        if len(keep) != len(lines):
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(keep)
+            removed += len(lines) - len(keep)
+    state = load()
+    if lid in state.get("lessons", {}):
+        state["lessons"][lid]["mode"] = "retired"
+        save(state)
+
+    # A retired hook must stop costing anything: deregister it from Claude
+    # Code so the process never spawns, and move its scripts out of the
+    # directory the git runner reads. The archive keeps them with the story.
+    dropped = 0
+    if os.path.isfile(SETTINGS):
+        try:
+            with open(SETTINGS, encoding="utf-8") as fh:
+                settings = json.load(fh)
+        except (OSError, ValueError):
+            settings = None
+        if settings is not None:
+            entries = _settings_hooks(settings, match=f"/na/{lid}.sh")
+            if entries:
+                _drop_settings_entries(settings, entries)
+                _write_settings(settings)
+                dropped = len(entries)
+    try:
+        os.remove(os.path.join(VERIFIED, lid))
+    except OSError:
+        pass
+    moved = []
+    if os.path.isdir(HOOKS):
+        os.makedirs(ARCHIVE, exist_ok=True)
+        for name in sorted(os.listdir(HOOKS)):
+            if name == f"{lid}.sh" or name.startswith(f"{lid}-"):
+                os.replace(os.path.join(HOOKS, name), os.path.join(ARCHIVE, name))
+                moved.append(name)
+    print(f"{lid} retired ({removed} line removed, {dropped} hook entr{'y' if dropped == 1 else 'ies'} deregistered"
+          + (f", moved to archive: {', '.join(moved)}" if moved else "") + "). Archive kept.")
+
+
+def sort_rules():
+    counts = Counter(r["id"] for r in fires())
+    for path in lesson_files():
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().split("\n")
+        idx = [i for i, ln in enumerate(lines) if RULE_RE.match(ln)]
+        if len(idx) < 2:
+            continue
+        rule_lines = [lines[i] for i in idx]
+        ordered = sorted(rule_lines, key=lambda ln: -counts.get(RULE_RE.match(ln).group("id"), 0))
+        if ordered == rule_lines:
+            print(f"{os.path.relpath(path, ROOT)}: already ordered")
+            continue
+        for i, ln in zip(idx, ordered):
+            lines[i] = ln
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        print(f"{os.path.relpath(path, ROOT)}: reordered {len(idx)} rules, most-hit first")
+
+
+def why(lid):
+    path = os.path.join(ARCHIVE, f"{lid}.md")
+    if not os.path.exists(path):
+        sys.exit(f"no archive entry for {lid}")
+    print(open(path, encoding="utf-8").read())
+
+
+
+# ---------------------------------------------------------------------------
+# uninstall
+#
+# The rule is that this removes what never-again put there and nothing else.
+# A tool that asks a stranger to run a shell script against their repository
+# owes them a way back out, and an uninstall that takes a neighbouring file
+# with it is worse than none.
+#
+# It lives here rather than in install.sh because install.sh is in the clone,
+# and people delete the clone once they have installed. `na` is in the repo.
+# ---------------------------------------------------------------------------
+
+BLOCK_RE = re.compile(r"\n*<!-- BEGIN never-again -->.*?<!-- END never-again -->\n?", re.S)
+# The local-only block in .gitignore. One list; install writes or upgrades
+# the block from it, uninstall removes by the same shape. `.last-boot` stays
+# for hooks copied from the 0.2 browser-boot example, which still write it.
+GITIGNORE_HEADER = "# never-again (local only)"
+GITIGNORE_LINES = (".claude/never-again/fires.log",
+                   ".claude/never-again/calls.log",
+                   ".claude/never-again/.update-check",
+                   ".claude/never-again/.capture-none",
+                   ".claude/never-again/verified/",
+                   ".claude/never-again/.last-boot",
+                   "CLAUDE.md.bak", "AGENTS.md.bak", "GEMINI.md.bak",
+                   ".github/copilot-instructions.md.bak")
+GITIGNORE_RE = re.compile(
+    r"\n*" + re.escape(GITIGNORE_HEADER) + r"\n"
+    r"(?:(?:\.claude/never-again/[^\n]*|CLAUDE\.md\.bak|AGENTS\.md\.bak|GEMINI\.md\.bak"
+    r"|\.github/copilot-instructions\.md\.bak)\n)*", re.S)
+# Git never re-includes a path whose parent directory is excluded, so sharing
+# the hooks from a repo that ignores .claude/ means replacing that line with
+# a chain that re-includes each parent and excludes its other contents.
+GITIGNORE_UNIGNORE = (
+    "!.claude/", ".claude/*",
+    "!.claude/hooks/", ".claude/hooks/*", "!.claude/hooks/na/",
+    "!.claude/never-again/",
+    "!.claude/skills/", ".claude/skills/*", "!.claude/skills/never-again/",
+) + tuple(l for l in GITIGNORE_LINES if l.startswith(".claude/never-again/"))
+
+
+def _read_text(path):
+    """(text with \n endings, original newline, encoding errors handler).
+    Bytes that are not UTF-8 survive a round trip untouched."""
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    nl = "\r\n" if b"\r\n" in raw else "\n"
+    text = raw.decode("utf-8", "surrogateescape").replace("\r\n", "\n")
+    return text, nl
+
+
+def _write_text(path, text, nl):
+    with open(path, "wb") as fh:
+        fh.write(text.replace("\n", nl).encode("utf-8", "surrogateescape"))
+
+
+def cmd_gitignore(argv):
+    """Write or bring up to date the local-only block; --advice prints the
+    lines that share the hooks in a repo that ignores .claude/."""
+    if "--advice" in argv:
+        for ln in GITIGNORE_UNIGNORE:
+            print(ln)
+        return 0
+    gi = os.path.join(ROOT, ".gitignore")
+    text, nl = _read_text(gi) if os.path.isfile(gi) else ("", "\n")
+    block = GITIGNORE_HEADER + "\n" + "\n".join(GITIGNORE_LINES) + "\n"
+    m = GITIGNORE_RE.search(text)
+    if m and m.group(0).lstrip("\n") == block:
+        print("current")
+        return 0
+    verb = "upgraded" if m else "written"
+    if m:
+        text = GITIGNORE_RE.sub("\n", text)
+    text = text.rstrip("\n")
+    text = (text + "\n\n" if text else "") + block
+    _write_text(gi, text, nl)
+    print(verb)
+    return 0
+
+
+DISPATCH_CMD = '"$CLAUDE_PROJECT_DIR"/.claude/hooks/na/dispatch'
+
+
+def hook_index():
+    """One row per hook that can run: (id, mode, trigger, watch, scope).
+    Read from state.json and the scripts' TRIGGER/WATCH lines. This is the
+    index the dispatcher runs from; it is rebuilt on every call, which is one
+    process however many hooks there are."""
+    try:
+        lessons = load().get("lessons", {})
+    except (OSError, ValueError):
+        return []
+    rows = []
+    for lid, rec in sorted(lessons.items()):
+        if rec.get("form") != "hook" or rec.get("mode") == "retired":
+            continue
+        script = os.path.join(HOOKS, lid + ".sh")
+        if not os.path.isfile(script):
+            continue
+        trigger, watch = "commit", ""
+        try:
+            for ln in open(script, encoding="utf-8", errors="replace"):
+                if ln.startswith('TRIGGER="'):
+                    trigger = ln.split('"')[1]
+                elif ln.startswith('WATCH="'):
+                    watch = ln.split('"')[1].strip()
+        except OSError:
+            continue
+        rows.append((lid, rec.get("mode", "warn"), trigger, watch or "-", rec.get("scope", "-")))
+    return rows
+
+
+def cmd_index(public):
+    rows = hook_index()
+    if not public:
+        for lid, mode, trigger, watch, _scope in rows:
+            print("%s\t%s\t%s\t%s" % (lid, mode, trigger, watch))
+        return 0
+    print()
+    print("  hooks the dispatcher runs from")
+    print("  " + "-" * 60)
+    if not rows:
+        print("  none yet")
+    for lid, mode, trigger, watch, scope in rows:
+        print("  %-6s %-6s %-8s %-10s watch %s" % (lid, mode, trigger, scope, watch))
+    print()
+    return 0
+
+
+AFTER_CMD = '"$CLAUDE_PROJECT_DIR"/.claude/hooks/na/_after.sh'
+
+
+def _settings_load():
+    if not os.path.isfile(SETTINGS):
+        return {}
+    with open(SETTINGS, encoding="utf-8") as fh:
+        text = fh.read().strip()
+    return json.loads(text) if text else {}
+
+
+def _entries(settings, event):
+    for g in settings.get("hooks", {}).get(event, []) or []:
+        for h in (g or {}).get("hooks", []) or []:
+            yield h.get("command", "").replace("\\", "/")
+
+
+def _add_entry(settings, event, entry):
+    groups = settings.setdefault("hooks", {}).setdefault(event, [])
+    group = next((g for g in groups if g.get("matcher") == "Bash"), None)
+    if group is None:
+        group = {"matcher": "Bash", "hooks": []}
+        groups.append(group)
+    group.setdefault("hooks", []).append(entry)
+
+
+def cmd_register():
+    """Make .claude/settings.json register every never-again hook this repo
+    has: the after-commit resolver, and one PreToolUse entry per commit-time
+    hook lesson in state.json. Merged, never replaced; entries that exist are
+    left as they are. This is what a fresh clone needs, so settings.json
+    itself never has to be shared."""
+    try:
+        settings = _settings_load()
+    except ValueError as exc:
+        print("  settings   .claude/settings.json could not be parsed (%s); register the" % exc)
+        print("             never-again hooks yourself, see README" )
+        return 1
+    added = []
+    # No `if` filter on any entry. `Bash(git commit *)` matched only commands
+    # that begin with `git commit`, so `git add . && git commit` never reached
+    # the hook and only git's side saw it; the first calls.log from the field
+    # showed exactly that. The scripts decide from the command text, and exit
+    # before starting an interpreter when it holds no commit.
+    for event in ("PostToolUse", "PostToolUseFailure"):
+        if not any("/.claude/hooks/na/_after.sh" in c for c in _entries(settings, event)):
+            _add_entry(settings, event, {"type": "command", "command": AFTER_CMD})
+            added.append("_after.sh on " + event)
+    # One dispatcher entry replaces one entry per hook. Per-hook entries from
+    # earlier releases are dropped, or every hook would run twice.
+    if not any("/.claude/hooks/na/dispatch" in c for c in _entries(settings, "PreToolUse")):
+        _add_entry(settings, "PreToolUse", {"type": "command", "timeout": 600, "command": DISPATCH_CMD})
+        added.append("dispatch on PreToolUse")
+    # Entries an earlier release wrote with the filter lose it in place.
+    unfiltered = 0
+    for _event, _group, entry in _settings_hooks(settings):
+        if "if" in entry:
+            del entry["if"]
+            unfiltered += 1
+    if unfiltered:
+        added.append("dropped the `if` filter from %d entr%s so chained commits are seen"
+                     % (unfiltered, "y" if unfiltered == 1 else "ies"))
+    dropped = 0
+    for g in settings.get("hooks", {}).get("PreToolUse", []) or []:
+        keep = []
+        for h in (g or {}).get("hooks", []) or []:
+            c = h.get("command", "").replace("\\", "/")
+            if re.search(r"/\.claude/hooks/na/L\d+\.sh", c):
+                dropped += 1
+            else:
+                keep.append(h)
+        g["hooks"] = keep
+    if dropped:
+        settings["hooks"]["PreToolUse"] = [g for g in settings["hooks"]["PreToolUse"] if g.get("hooks")]
+        added.append("dropped %d per-hook entr%s the dispatcher replaces" % (dropped, "y" if dropped == 1 else "ies"))
+    skipped = [lid for lid, _m, trigger, _w, _s in hook_index() if trigger != "commit"]
+    if added:
+        with open(SETTINGS, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(settings, fh, indent=2)
+            fh.write("\n")
+        print("  settings   registered %s" % ", ".join(added))
+    else:
+        print("  settings   every never-again hook already registered")
+    if skipped:
+        print("  settings   not commit-time, so not reached by the dispatcher's Bash entry: %s" % ", ".join(skipped))
+    # The other agents this repo uses, remembered in state.json by `na _agents`.
+    try:
+        agents = list(load().get("agents") or [])
+    except (OSError, ValueError):
+        agents = []
+    for agent in agents:
+        if agent in AGENTS:
+            print("  agents     " + register_agent(agent))
+    return 0
+
+
+# --- other agents -------------------------------------------------------------
+# Codex, Gemini CLI, Copilot and Antigravity run hooks the way Claude Code
+# does: one JSON payload on stdin, one JSON answer on stdout. The dispatcher
+# reads all five shapes and answers in the caller's dialect (--agent NAME).
+# What differs is where each agent keeps its hook config, which file it reads
+# rules from, and where it looks for skills. One table for all three.
+AGENT_NAMES = ("codex", "gemini", "copilot", "antigravity")
+AGENTS = {
+    "codex":       {"config": ".codex/hooks.json",
+                    "rules": "AGENTS.md",
+                    "skills": ".agents/skills",
+                    "tells": (".codex",)},
+    "gemini":      {"config": ".gemini/settings.json",
+                    "rules": "GEMINI.md",
+                    "skills": ".gemini/skills",
+                    "tells": (".gemini", "GEMINI.md")},
+    "copilot":     {"config": ".github/hooks/never-again.json",
+                    "rules": ".github/copilot-instructions.md",
+                    "skills": ".github/skills",
+                    "tells": (".github/copilot-instructions.md", ".github/hooks", ".github/copilot")},
+    "antigravity": {"config": ".agents/hooks.json",
+                    "rules": "AGENTS.md",
+                    "skills": ".agents/skills",
+                    "tells": (".agents/hooks.json", ".agents/rules")},
+}
+# Three things about how an agent runs a hook are not ours to assume: the
+# directory (Antigravity uses .agents/ itself), the quoting (PowerShell 5.1
+# strips the quotes off a path it hands to a native program), and the
+# machine (a committed hook file must not carry one machine's path). So the
+# entry holds none of those. It runs ~/.never-again/launch, a launcher the
+# installer puts outside every repo, which finds the repo from the payload's
+# own working directory. A missing launcher exits 0 from the entry itself,
+# so an agent that fails closed on hook errors is never locked out. On
+# Windows the entry names Git's bash.exe by full path, since a process an
+# agent spawns has WSL's bash on PATH or none at all.
+LAUNCH = "~/.never-again/launch"
+WIN_BASH = (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe",
+            r"C:\Program Files (x86)\Git\bin\bash.exe")
+
+
+def _win_bash():
+    for c in WIN_BASH + (os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Git", "bin", "bash.exe"),):
+        if c and os.path.isfile(c):
+            return c.replace("\\", "/")
+    return None
+
+
+def _entry_cmd(bash, agent, after=False, powershell=False):
+    """One hook entry. No quote, no $(...), no path inside the -c script."""
+    inner = "test -f %s && exec bash %s --agent %s%s; exit 0" % (LAUNCH, LAUNCH, agent, " --after" if after else "")
+    head = ('& "%s"' % bash) if powershell else (('"%s"' % bash) if "/" in bash else bash)
+    return '%s -c "%s"' % (head, inner)
+
+
+def _agent_cmds(agent):
+    """(pre-tool command, post-tool command) for AGENT. Copilot gets a bash
+    and a powershell form since its file has a field for each; the others
+    get the form for the host this runs on."""
+    wb = _win_bash() if os.name == "nt" else None
+    if agent == "copilot":
+        ps_bash = wb or "C:/Program Files/Git/bin/bash.exe"
+        return ((_entry_cmd("bash", agent), _entry_cmd(ps_bash, agent, powershell=True)),
+                (_entry_cmd("bash", agent, after=True), _entry_cmd(ps_bash, agent, after=True, powershell=True)))
+    bash = wb or "bash"
+    return _entry_cmd(bash, agent), _entry_cmd(bash, agent, after=True)
+
+
+def _is_ours(entry):
+    for key in ("command", "bash", "powershell"):
+        v = str((entry or {}).get(key, "")).replace("\\", "/")
+        if "hooks/na/" in v or ".never-again/launch" in v:
+            return True
+    return False
+
+
+def _json_load(path):
+    if not os.path.isfile(path):
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read().strip()
+    return json.loads(text) if text else {}
+
+
+def _json_save(path, data):
+    d = os.path.dirname(path)
+    if d and not os.path.isdir(d):
+        os.makedirs(d)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+
+
+def _merge_group(container, event, matcher, entry):
+    """Add ENTRY under EVENT in a Claude-shaped hooks container. One of ours
+    already there is brought up to date in place when its command differs
+    (an older release wrote a different form). Returns True on any change."""
+    groups = container.setdefault(event, [])
+    if not isinstance(groups, list):
+        return False
+    for g in groups:
+        for h in (g or {}).get("hooks", []) or []:
+            if _is_ours(h):
+                if h == entry:
+                    return False
+                h.clear()
+                h.update(entry)
+                return True
+    group = next((g for g in groups if isinstance(g, dict) and g.get("matcher") == matcher), None)
+    if group is None:
+        group = {"matcher": matcher, "hooks": []}
+        groups.append(group)
+    group.setdefault("hooks", []).append(entry)
+    return True
+
+
+def _drop_ours(container):
+    """Remove our entries from every event in a Claude-shaped hooks container;
+    drop the groups and events that only held them. Returns how many went."""
+    gone = 0
+    if not isinstance(container, dict):
+        return 0
+    for event in list(container.keys()):
+        groups = container.get(event)
+        if not isinstance(groups, list):
+            continue
+        for g in groups:
+            hooks = (g or {}).get("hooks")
+            if not isinstance(hooks, list):
+                continue
+            keep = [h for h in hooks if not _is_ours(h)]
+            gone += len(hooks) - len(keep)
+            g["hooks"] = keep
+        groups[:] = [g for g in groups if not isinstance(g, dict) or g.get("hooks") or "hooks" not in g]
+        if not groups:
+            del container[event]
+    return gone
+
+
+def register_agent(agent):
+    """Write the one dispatcher entry and the after-commit entry into AGENT's
+    hook config. Merged, never replaced. Returns a one-line report."""
+    spec = AGENTS[agent]
+    path = os.path.join(ROOT, *spec["config"].split("/"))
+    disp, after = _agent_cmds(agent)
+    try:
+        data = _json_load(path)
+    except ValueError as exc:
+        return "%s: %s could not be parsed (%s); add the hook yourself, see README" % (agent, spec["config"], exc)
+    if not isinstance(data, dict):
+        return "%s: %s is not a JSON object; add the hook yourself, see README" % (agent, spec["config"])
+    added = False
+    if agent == "codex":
+        c = data.setdefault("hooks", {})
+        added |= _merge_group(c, "PreToolUse", "Bash",
+                              {"type": "command", "command": disp, "timeout": 600, "statusMessage": "never-again"})
+        added |= _merge_group(c, "PostToolUse", "Bash", {"type": "command", "command": after})
+    elif agent == "gemini":
+        c = data.setdefault("hooks", {})
+        added |= _merge_group(c, "BeforeTool", "run_shell_command",
+                              {"name": "never-again", "type": "command", "command": disp, "timeout": 600000})
+        added |= _merge_group(c, "AfterTool", "run_shell_command",
+                              {"name": "never-again-after", "type": "command", "command": after})
+    elif agent == "antigravity":
+        c = data.setdefault("never-again", {})
+        added |= _merge_group(c, "PreToolUse", "run_command", {"type": "command", "command": disp, "timeout": 600})
+        added |= _merge_group(c, "PostToolUse", "run_command", {"type": "command", "command": after})
+    elif agent == "copilot":
+        want = {"version": 1, "hooks": {
+            "preToolUse": [{"type": "command", "matcher": "bash", "bash": disp[0], "powershell": disp[1], "timeoutSec": 600}],
+            "postToolUse": [{"type": "command", "matcher": "bash", "bash": after[0], "powershell": after[1]}]}}
+        added = data != want
+        data = want
+    if added:
+        _json_save(path, data)
+        note = ""
+        if agent == "antigravity":
+            note = " (restart Antigravity, then ask it which hooks are installed)"
+        if agent == "codex":
+            note = " (Codex asks you to trust the hook once: /hooks in Codex)"
+        return "%s: registered in %s%s" % (agent, spec["config"], note)
+    return "%s: already registered in %s" % (agent, spec["config"])
+
+
+def unregister_agent(agent):
+    """Undo register_agent for one agent. Returns (path, what) or None."""
+    spec = AGENTS[agent]
+    path = os.path.join(ROOT, *spec["config"].split("/"))
+    if not os.path.isfile(path):
+        return None
+    if agent == "copilot":
+        # The file is ours wholesale. Leave it if someone added their own entry.
+        try:
+            data = _json_load(path)
+        except ValueError:
+            return (spec["config"], "left alone, could not parse")
+        entries = [e for v in (data.get("hooks") or {}).values() if isinstance(v, list) for e in v]
+        if entries and all(_is_ours(e) for e in entries):
+            os.remove(path)
+            _prune_empty(os.path.dirname(path))
+            return (spec["config"], "removed")
+        gone = 0
+        for v in (data.get("hooks") or {}).values():
+            if isinstance(v, list):
+                keep = [e for e in v if not _is_ours(e)]
+                gone += len(v) - len(keep)
+                v[:] = keep
+        if gone:
+            _json_save(path, data)
+            return (spec["config"], "removed %d entr%s, kept the rest" % (gone, "y" if gone == 1 else "ies"))
+        return None
+    try:
+        data = _json_load(path)
+    except ValueError:
+        return (spec["config"], "left alone, could not parse")
+    if not isinstance(data, dict):
+        return None
+    gone = 0
+    if agent == "antigravity":
+        for key in list(data.keys()):
+            gone += _drop_ours(data.get(key))
+            if isinstance(data.get(key), dict) and not data[key]:
+                del data[key]
+    else:
+        gone += _drop_ours(data.get("hooks"))
+        if isinstance(data.get("hooks"), dict) and not data["hooks"]:
+            del data["hooks"]
+    if not gone:
+        return None
+    if data:
+        _json_save(path, data)
+        return (spec["config"], "removed %d entr%s, kept the rest" % (gone, "y" if gone == 1 else "ies"))
+    os.remove(path)
+    _prune_empty(os.path.dirname(path))
+    return (spec["config"], "removed (held nothing else)")
+
+
+def detect_agents():
+    """Agents whose files are already in this repo."""
+    found = []
+    for agent in AGENT_NAMES:
+        for tell in AGENTS[agent]["tells"]:
+            if os.path.exists(os.path.join(ROOT, *tell.split("/"))):
+                found.append(agent)
+                break
+    return found
+
+
+def cmd_agents(argv):
+    """`na _agents [--add NAME]... [--detect]`: the agents this repo registers
+    hooks for, one per line. Names given are remembered in state.json, so a
+    re-run of the installer keeps them; --detect also adopts agents whose
+    folders are already here."""
+    try:
+        state = load()
+    except (OSError, ValueError):
+        state = None
+    agents = list((state or {}).get("agents") or [])
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--add" and i + 1 < len(argv):
+            for name in argv[i + 1].split(","):
+                name = name.strip().lower()
+                if name and name not in AGENT_NAMES:
+                    sys.exit("unknown agent %r; one of %s" % (name, ", ".join(AGENT_NAMES)))
+                if name and name not in agents:
+                    agents.append(name)
+            i += 2
+            continue
+        if argv[i] == "--detect":
+            for name in detect_agents():
+                if name not in agents:
+                    agents.append(name)
+        i += 1
+    if state is not None and agents != list(state.get("agents") or []):
+        state["agents"] = agents
+        save(state)
+    for name in agents:
+        print(name)
+    return 0
+
+
+def cmd_lessons_report():
+    """What an existing root LESSONS.md holds, in the installer's voice. Uses
+    the same rule pattern and marker as everything else here."""
+    path = os.path.join(ROOT, "LESSONS.md")
+    if not os.path.isfile(path):
+        return 0
+    lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
+    marker = next((i for i, ln in enumerate(lines) if MARKER in ln), None)
+    if marker is not None:
+        lines = lines[marker + 1:]
+    filed = sum(1 for ln in lines if RULE_RE.match(ln))
+    other = sum(1 for ln in lines if ln.strip() and not ln.lstrip().startswith(("#", "<!--"))
+                and not RULE_RE.match(ln) and ln.strip() != "---")
+    if other and not filed:
+        print("  lessons    LESSONS.md already exists \u2014 left untouched")
+        print("             It holds %d line(s) of notes in your own words. Claude will read them," % other)
+        print("             but never-again cannot count, cap, sort or enforce them. To bring them")
+        print("             in, tell Claude once:")
+        print('               "read LESSONS.md and refile each note through the never-again skill"')
+    elif other:
+        print("  lessons    LESSONS.md already exists \u2014 left untouched (%d filed, %d note(s) in your own words)" % (filed, other))
+    else:
+        print("  lessons    LESSONS.md already exists \u2014 left untouched (%d filed)" % filed)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# import: notes that predate the tool
+#
+# Most repositories already hold lessons somewhere: a CLAUDE.md full of rules,
+# a NOTES.md, a docs/lessons.md, an editor rules file. Finding them and
+# remembering which were imported is mechanical, so it lives here. Reading
+# each note and deciding whether it is a hook, a one-liner or nothing is
+# judgement, so that is the skill's job. Sources are never edited.
+# ---------------------------------------------------------------------------
+
+IMPORT_NAMES = {
+    "claude.md", "lessons.md", "lesson.md", "learnings.md", "learning.md",
+    "notes.md", "gotchas.md", "mistakes.md", "pitfalls.md", "til.md",
+    "conventions.md", "agents.md", "rules.md", ".cursorrules", ".windsurfrules",
+    ".clinerules", "copilot-instructions.md", "handover.md",
+}
+IMPORT_WORDS = ("lesson", "learn", "gotcha", "mistake", "pitfall", "postmortem",
+                "post-mortem", "retro")
+IMPORT_SKIP_DIRS = {".git", "node_modules", ".claude", "dist", "build", "vendor",
+                    "coverage", ".venv", "venv", "target", "__pycache__"}
+
+
+def import_candidates():
+    """Files that look like notes, with a count of non-heading lines. The
+    managed LESSONS.md files are not candidates: they are already ours."""
+    managed_set = {os.path.abspath(p) for p in lesson_files()}
+    out = []
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in IMPORT_SKIP_DIRS]
+        depth = os.path.relpath(dirpath, ROOT).count(os.sep)
+        if depth > 3:
+            dirnames[:] = []
+        for name in filenames:
+            low = name.lower()
+            looks = (low in IMPORT_NAMES
+                     or (low.endswith((".md", ".mdc", ".txt")) and any(w in low for w in IMPORT_WORDS))
+                     or (dirpath.replace(os.sep, "/").endswith("/.cursor/rules") and low.endswith(".mdc")))
+            if not looks:
+                continue
+            full = os.path.join(dirpath, name)
+            if os.path.abspath(full) in managed_set:
+                continue
+            text = _note_text(full)
+            if text is None:
+                continue
+            lines = [ln for ln in text.split("\n")
+                     if ln.strip() and not ln.lstrip().startswith(("#", "<!--", "```", "---"))]
+            if not lines:
+                continue
+            rel = os.path.relpath(full, ROOT).replace(os.sep, "/")
+            out.append((rel, len(lines), _sha_text(text)))
+    return sorted(out)
+
+
+def _sha_text(text):
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _note_text(full):
+    """The notes in a file as the listing and the mark both see them:
+    without our own block, which is not a note and changes on every install. Both hash this, so "changed since import" means the
+    person's text changed."""
+    try:
+        text = open(full, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return None
+    # The block is ours wherever it sits: CLAUDE.md, AGENTS.md, GEMINI.md or
+    # copilot-instructions.md. A file holding nothing else is not a note.
+    return BLOCK_RE.sub("\n", text)
+
+
+def cmd_import(argv):
+    state = load()
+    imports = state.setdefault("imports", {})
+    if "--mark" in argv:
+        rel = argv[argv.index("--mark") + 1].replace("\\", "/")
+        full = os.path.join(ROOT, rel)
+        if not os.path.isfile(full):
+            sys.exit("no such file: %s" % rel)
+        filed = int(argv[argv.index("--filed") + 1]) if "--filed" in argv else None
+        imports[rel] = {"sha": _sha_text(_note_text(full) or ""),
+                        "date": time.strftime("%Y-%m-%d"), "filed": filed}
+        save(state)
+        print("%s marked imported%s" % (rel, "" if filed is None else " (%d lesson%s filed)" % (filed, "" if filed == 1 else "s")))
+        return 0
+    cands = import_candidates()
+    brief = "--brief" in argv
+    if not cands:
+        if not brief:
+            print("no notes files found that never-again could import.")
+        return 0
+    todo = []
+    rows = []
+    for rel, n, sha in cands:
+        rec = imports.get(rel)
+        if rec and rec.get("sha") == sha:
+            status = "imported %s" % rec.get("date", "")
+        elif rec:
+            status = "changed since import"
+            todo.append((rel, n))
+        else:
+            status = "not imported"
+            todo.append((rel, n))
+        rows.append((rel, n, status))
+    if brief:
+        if not todo:
+            return 0
+        print("  notes      %d file(s) of notes that never-again cannot count, cap or enforce:" % len(todo))
+        for rel, n in todo[:6]:
+            print("               %-40s %d line(s)" % (rel, n))
+        if len(todo) > 6:
+            print("               ... and %d more (na import lists them)" % (len(todo) - 6))
+        print("             To turn them into lessons, tell Claude once:")
+        print('               "import the existing notes with the never-again skill"')
+        return 0
+    print()
+    print("  notes already in this repo")
+    print("  " + "-" * 62)
+    for rel, n, status in rows:
+        print("  %-40s %5d line(s)   %s" % (rel, n, status))
+    print()
+    if todo:
+        print("  %d file(s) to import. Tell Claude once:" % len(todo))
+        print('    "import the existing notes with the never-again skill"')
+    else:
+        print("  everything here has been imported. Sources were left as they are.")
+    print()
+    return 0
+
+
+# Every stub the installer writes carries this, whichever git hook it is for.
+GIT_STUB_MARK = "stub (managed by install.sh; uninstall removes it)"
+
+
+def git_hooks_dir():
+    """Where git looks for hooks in this repo, honouring core.hooksPath."""
+    import subprocess
+    try:
+        p = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-path", "hooks"],
+                           capture_output=True, text=True)
+        if p.returncode == 0 and p.stdout.strip():
+            d = p.stdout.strip()
+            return d if os.path.isabs(d) else os.path.join(ROOT, d)
+    except OSError:
+        pass
+    return None
+
+
+def _count(path):
+    if not os.path.isdir(path):
+        return 0
+    return sum(len(files) for _, _, files in os.walk(path))
+
+
+def _rmtree(path):
+    """Remove a directory we own. Returns what happened, never raises."""
+    import shutil
+    try:
+        shutil.rmtree(path)
+        return True, ""
+    except OSError as exc:
+        return False, str(exc)
+
+
+def _prune_empty(path):
+    """Drop a directory only if nothing else is using it."""
+    try:
+        if os.path.isdir(path) and not os.listdir(path):
+            os.rmdir(path)
+            return True
+    except OSError:
+        pass
+    return False
+
+
+# --- upgrade ------------------------------------------------------------------
+# An install is per repo on purpose: a project moves to a newer release when
+# you say so, not when a global copy changes under it. `na upgrade` is how it
+# moves: fetch the release, run its installer here. This is the one place in
+# the tool that touches the network, and only when you run it.
+REPO = "malaysherasia-ai/claude-never-again"
+
+
+def _bash():
+    """A bash that runs. From PowerShell through na.cmd, Git's bash is
+    installed but usually not on PATH."""
+    import shutil
+    for c in ("bash", r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe"):
+        found = shutil.which(c) if not os.path.isabs(c) else (c if os.path.isfile(c) else None)
+        if found:
+            return found
+    return None
+
+
+def _source_version(src):
+    try:
+        for ln in open(os.path.join(src, "scripts", "na"), encoding="utf-8"):
+            if ln.startswith("VERSION = "):
+                return ln.split('"')[1]
+    except OSError:
+        pass
+    return None
+
+
+def _vtuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v or "")[:3])
+
+
+RELEASE_URL = "https://api.github.com/repos/%s/releases/latest" % REPO
+UPDATE_CACHE = os.path.join(BASE, ".update-check")
+CHECK_EVERY_S = 24 * 3600
+
+
+def _updates_setting():
+    try:
+        return str(load().get("updates", "check")).lower()
+    except (OSError, ValueError):
+        return "check"
+
+
+def _read_update_cache():
+    try:
+        with open(UPDATE_CACHE, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def cmd_check_update(argv):
+    """`na _check-update [--cached]`: print the newest release's version when
+    it is newer than this one, else nothing. Without --cached, refresh the
+    answer from GitHub once a day: one request, nothing sent but the
+    request, never on the commit path (the after-commit hook calls it). Off
+    entirely with "updates": "off" in state.json."""
+    if _updates_setting() == "off":
+        return 0
+    cache = _read_update_cache()
+    now = time.time()
+    if "--cached" not in argv and now - float(cache.get("ts") or 0) > CHECK_EVERY_S:
+        latest = ""
+        try:
+            import urllib.request
+            url = os.environ.get("NA_UPDATE_URL") or RELEASE_URL
+            req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
+                                                       "User-Agent": "never-again/" + VERSION})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                latest = str(json.load(r).get("tag_name", "")).lstrip("v")
+        except Exception:
+            latest = cache.get("latest", "")   # offline: keep what we knew, try tomorrow
+        cache = {"ts": now, "latest": latest, "checked_by": VERSION}
+        try:
+            os.makedirs(BASE, exist_ok=True)
+            with open(UPDATE_CACHE, "w", encoding="utf-8", newline="\n") as fh:
+                json.dump(cache, fh)
+        except OSError:
+            pass
+    latest = cache.get("latest") or ""
+    if latest and _vtuple(latest) > _vtuple(VERSION):
+        print(latest)
+    return 0
+
+
+def _print_update_nudge():
+    cache = _read_update_cache()
+    latest = cache.get("latest") or ""
+    if _updates_setting() != "off" and latest and _vtuple(latest) > _vtuple(VERSION):
+        print("  update          %s is out (this repo has %s): na upgrade" % (latest, VERSION))
+        print()
+
+
+def _latest_release():
+    """(tag, tarball url) of the newest release on GitHub."""
+    import urllib.request
+    req = urllib.request.Request(RELEASE_URL,
+                                 headers={"Accept": "application/vnd.github+json",
+                                          "User-Agent": "never-again/" + VERSION})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        d = json.load(r)
+    tag = d["tag_name"]
+    return tag, "https://github.com/%s/archive/refs/tags/%s.tar.gz" % (REPO, tag)
+
+
+def _fetch_source(url, dest):
+    """Download and unpack a release tarball into DEST. Returns the directory
+    that holds install.sh. Refuses entries that would land outside DEST."""
+    import tarfile, urllib.request, io as _io
+    req = urllib.request.Request(url, headers={"User-Agent": "never-again/" + VERSION})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        data = r.read()
+    with tarfile.open(fileobj=_io.BytesIO(data), mode="r:gz") as tf:
+        base = os.path.realpath(dest)
+        for m in tf.getmembers():
+            target = os.path.realpath(os.path.join(dest, m.name))
+            if target != base and not target.startswith(base + os.sep):
+                raise ValueError("entry outside the unpack dir: " + m.name)
+            if m.issym() or m.islnk():
+                raise ValueError("links are not expected in a release: " + m.name)
+        try:
+            tf.extractall(dest, filter="data")
+        except TypeError:
+            tf.extractall(dest)
+    for name in sorted(os.listdir(dest)):
+        if os.path.isfile(os.path.join(dest, name, "install.sh")):
+            return os.path.join(dest, name)
+    raise ValueError("no install.sh in the download")
+
+
+def upgrade(argv):
+    """`na upgrade [--check] [--yes] [--from DIR|TARBALL]`."""
+    check = "--check" in argv
+    assume_yes = "--yes" in argv or "-y" in argv
+    src_opt = None
+    if "--from" in argv:
+        i = argv.index("--from")
+        if i + 1 >= len(argv):
+            sys.exit("usage: na upgrade [--check] [--yes] [--from DIR|TARBALL]")
+        src_opt = argv[i + 1]
+    import shutil, subprocess, tempfile
+    tmp = tempfile.mkdtemp(prefix="never-again-")
+    try:
+        print()
+        src, url = None, None
+        if src_opt:
+            if os.path.isdir(src_opt):
+                src = os.path.abspath(src_opt)
+            elif os.path.isfile(src_opt):
+                url = "file:///" + os.path.abspath(src_opt).replace("\\", "/").lstrip("/")
+                try:
+                    src = _fetch_source(url, tmp)
+                except (OSError, ValueError, tarfile_error()) as exc:
+                    print("  could not unpack %s: %s" % (src_opt, exc))
+                    return 1
+            else:
+                print("  %s is neither a directory nor a file" % src_opt)
+                return 1
+            new = _source_version(src)
+            label = "%s (%s)" % (new, src_opt)
+            if not new:
+                print("  %s holds no never-again scripts/na" % src_opt)
+                return 1
+        else:
+            try:
+                tag, url = _latest_release()
+            except Exception as exc:
+                print("  could not reach GitHub: %s" % exc)
+                print("  Upgrade by hand: clone %s and run bash install.sh here." % REPO)
+                return 1
+            new = tag.lstrip("v")
+            label = "%s (release %s)" % (new, tag)
+
+        print("  installed  %s" % VERSION)
+        print("  available  %s" % label)
+        if _vtuple(new) <= _vtuple(VERSION):
+            print("  Nothing to do: this repo is up to date.")
+            print()
+            return 0
+        if check:
+            print("  Run `na upgrade` to move this repo to %s." % new)
+            print()
+            return 0
+        if not assume_yes:
+            try:
+                answer = input("  Upgrade %s -> %s here? Runs the release's install.sh in %s [y/N] " % (VERSION, new, ROOT)).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                print("  Nothing changed: no answer given. Re-run with --yes to confirm without a prompt.")
+                print()
+                return 1
+            if answer not in ("y", "yes"):
+                print("  Nothing changed.")
+                print()
+                return 1
+            print()
+
+        if src is None:
+            try:
+                src = _fetch_source(url, tmp)
+            except (OSError, ValueError, tarfile_error()) as exc:
+                print("  download failed: %s" % exc)
+                return 1
+        bash = _bash()
+        if not bash:
+            print("  no bash found; run this yourself:  bash %s %s" % (os.path.join(src, "install.sh"), ROOT))
+            return 1
+        rc = subprocess.call([bash, os.path.join(src, "install.sh"), ROOT])
+        if rc != 0:
+            print("  install.sh exited %d; the repo may be part way between versions. Re-run na upgrade." % rc)
+            return rc
+        print("  never-again %s -> %s in %s" % (VERSION, new, ROOT))
+        print()
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def tarfile_error():
+    import tarfile
+    return tarfile.TarError
+
+
+def uninstall(argv):
+    assume_yes = "--yes" in argv or "-y" in argv
+
+    skills = os.path.join(ROOT, ".claude", "skills", "never-again")
+    claude_md = os.path.join(ROOT, "CLAUDE.md")
+    gitignore = os.path.join(ROOT, ".gitignore")
+    lessons = os.path.join(ROOT, "LESSONS.md")
+
+    removals, edits, keeps = [], [], []
+
+    for label, path in (("skill", skills), ("hooks", HOOKS), ("state", BASE)):
+        if os.path.isdir(path):
+            rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
+            removals.append((rel + "/", "%d file(s)" % _count(path), path))
+
+    git_stubs = []
+    hd = git_hooks_dir()
+    if hd:
+        for name in ("pre-commit", "pre-merge-commit", "commit-msg"):
+            cand = os.path.join(hd, name)
+            try:
+                if os.path.isfile(cand) and GIT_STUB_MARK in open(cand, encoding="utf-8", errors="replace").read():
+                    git_stubs.append(cand)
+                    removals.append((os.path.relpath(cand, ROOT).replace(os.sep, "/"),
+                                     "git %s stub" % name, cand))
+                elif os.path.isfile(cand):
+                    keeps.append((os.path.relpath(cand, ROOT).replace(os.sep, "/"),
+                                  "not ours; remove the never-again line yourself if you added one"))
+            except OSError:
+                pass
+
+    claude_text = None
+    if os.path.isfile(claude_md):
+        claude_text = open(claude_md, encoding="utf-8").read()
+        if BLOCK_RE.search(claude_text):
+            edits.append(("CLAUDE.md", "strip the never-again block, keep the rest"))
+        else:
+            keeps.append(("CLAUDE.md", "no never-again block found"))
+
+    settings = None
+    hook_entries = []
+    if os.path.isfile(SETTINGS):
+        try:
+            with open(SETTINGS, encoding="utf-8") as fh:
+                settings = json.load(fh)
+            hook_entries = _settings_hooks(settings)
+        except (OSError, ValueError) as exc:
+            keeps.append((".claude/settings.json", "left alone, could not parse (%s)" % exc))
+            settings = None
+        if hook_entries:
+            edits.append((".claude/settings.json",
+                          "remove %d hook entr%s, keep everything else"
+                          % (len(hook_entries), "y" if len(hook_entries) == 1 else "ies")))
+
+    gi_text, gi_nl = None, "\n"
+    if os.path.isfile(gitignore):
+        gi_text, gi_nl = _read_text(gitignore)
+        if GITIGNORE_RE.search(gi_text):
+            edits.append((".gitignore", "remove the never-again section"))
+
+    # Other agents: their hook config entries, the rules block in the file
+    # they read, and the skill copy in their skills folder. Checked for every
+    # agent, not only the remembered ones, so a half-done install still cleans.
+    agent_rules, agent_skills = [], []
+    for agent in AGENT_NAMES:
+        spec = AGENTS[agent]
+        cfg = os.path.join(ROOT, *spec["config"].split("/"))
+        if os.path.isfile(cfg):
+            try:
+                text = open(cfg, encoding="utf-8").read()
+            except OSError:
+                text = ""
+            if "hooks/na/" in text.replace("\\", "/") or ".never-again/launch" in text:
+                edits.append((spec["config"], "remove the never-again hook entries, keep the rest"))
+        rules = os.path.join(ROOT, *spec["rules"].split("/"))
+        if rules not in [r for r, _ in agent_rules] and os.path.isfile(rules):
+            try:
+                if BLOCK_RE.search(open(rules, encoding="utf-8").read()):
+                    agent_rules.append((rules, spec["rules"]))
+                    edits.append((spec["rules"], "strip the never-again block, keep the rest"))
+            except (OSError, UnicodeDecodeError):
+                pass
+        sk = os.path.join(ROOT, *spec["skills"].split("/"), "never-again")
+        if sk not in [d for d, _ in agent_skills] and os.path.isfile(os.path.join(sk, "SKILL.md")):
+            agent_skills.append((sk, spec["skills"] + "/never-again/"))
+            removals.append((spec["skills"] + "/never-again/", "%d file(s)" % _count(sk), sk))
+
+    launcher = os.path.expanduser(LAUNCH)
+    if os.path.isfile(launcher):
+        keeps.append(("~/.never-again/launch", "shared by every repo on this machine; delete it yourself when none uses never-again"))
+    if os.path.isfile(lessons):
+        keeps.append(("LESSONS.md", "your rules outlive the tool; delete it yourself if you want it gone"))
+    backup = claude_md + ".bak"
+    if os.path.isfile(backup):
+        keeps.append(("CLAUDE.md.bak", "installer backup, yours to delete"))
+
+    print()
+    print("never-again uninstall from %s" % ROOT)
+    print("  " + "-" * 66)
+    if not removals and not edits:
+        print("  nothing to remove. never-again is already uninstalled here.")
+        print()
+        return 0
+    for rel, detail, _ in removals:
+        print("  remove   %-34s %s" % (rel, detail))
+    for rel, detail in edits:
+        print("  edit     %-34s %s" % (rel, detail))
+    for rel, detail in keeps:
+        print("  keep     %-34s %s" % (rel, detail))
+    print()
+
+    if not assume_yes:
+        # Default to no, and treat "cannot ask" as no. isatty() is not a usable
+        # test here: under Git Bash on Windows it reports a terminal even when
+        # stdin is closed, so the EOF path is what actually catches a script or
+        # a pipe. Both roads lead to removing nothing.
+        try:
+            answer = input("  Proceed? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            print("  Nothing removed: no answer given. Re-run with --yes to")
+            print("  confirm without a prompt.")
+            print()
+            return 1
+        if answer not in ("y", "yes"):
+            print("  Nothing removed.")
+            print()
+            return 1
+        print()
+
+    # --- edits first. If one fails we have not yet deleted the scripts. -----
+    if claude_text is not None and BLOCK_RE.search(claude_text):
+        new = BLOCK_RE.sub("\n", claude_text)
+        if not new.endswith("\n"):
+            new += "\n"
+        with open(claude_md, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(new)
+        print("  edited   CLAUDE.md")
+
+    if settings is not None and hook_entries:
+        _drop_settings_entries(settings, hook_entries)
+        _write_settings(settings)
+        print("  edited   .claude/settings.json")
+
+    for agent in AGENT_NAMES:
+        try:
+            done = unregister_agent(agent)
+        except OSError as exc:
+            done = (AGENTS[agent]["config"], "COULD NOT edit: %s" % exc)
+        if done:
+            print("  edited   %s (%s)" % done)
+    for path, rel in agent_rules:
+        text = open(path, encoding="utf-8").read()
+        new = BLOCK_RE.sub("\n", text)
+        if not new.endswith("\n"):
+            new += "\n"
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(new)
+        print("  edited   %s" % rel)
+
+    if gi_text is not None and GITIGNORE_RE.search(gi_text):
+        new = GITIGNORE_RE.sub("\n", gi_text).lstrip("\n")
+        _write_text(gitignore, new, gi_nl)
+        print("  edited   .gitignore")
+
+    # --- then the directories. BASE holds this script, so it goes last. -----
+    failures = []
+    for rel, _detail, path in sorted(removals, key=lambda r: r[2] == BASE):
+        if path in git_stubs:
+            try:
+                os.remove(path)
+                print("  removed  %s" % rel)
+            except OSError as exc:
+                failures.append((rel, str(exc)))
+            continue
+        ok, err = _rmtree(path)
+        if ok:
+            print("  removed  %s" % rel)
+        else:
+            failures.append((rel, err))
+
+    for parent in [os.path.join(ROOT, ".claude", "skills"),
+                   os.path.join(ROOT, ".claude", "hooks")] + \
+                  [os.path.join(ROOT, *AGENTS[a]["skills"].split("/")) for a in AGENT_NAMES]:
+        if _prune_empty(parent):
+            print("  removed  %s/ (empty)" % os.path.relpath(parent, ROOT).replace(os.sep, "/"))
+
+    print()
+    if failures:
+        for rel, err in failures:
+            print("  COULD NOT REMOVE %s: %s" % (rel, err))
+        print("  Remove it by hand; everything else is done.")
+        print()
+        return 1
+
+    print("  Done. LESSONS.md was kept: the rules are yours, and they are")
+    print("  still readable without the tool that enforced them.")
+    print()
+    return 0
+
+def _lesson_id(arg):
+    """L017 however it was typed; the capture check's own id as it is."""
+    return arg.upper() if re.fullmatch(r"[lL]\d+", arg) else arg
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] == "stats":
+        rc = stats()
+        # A person is looking; refresh the once-a-day check and say so.
+        cmd_check_update([]) if sys.stdout.isatty() else None
+        _print_update_nudge()
+        return rc
+    cmd = args[0]
+    if cmd in ("--help", "-h", "help"):
+        print(USAGE)
+        return 0
+    if cmd in ("--version", "-v", "version"):
+        print("never-again " + VERSION)
+        return 0
+    if cmd == "sort":
+        return sort_rules()
+    if cmd == "uninstall":
+        return uninstall(args[1:])
+    if cmd == "upgrade":
+        return upgrade(args[1:])
+    if cmd == "_check-update":
+        return cmd_check_update(args[1:])
+    # Internal: called by the hooks, not by people.
+    if cmd == "none":
+        return cmd_none(args[1:])
+    if cmd == "_commit-message":
+        print(commit_message(args[1] if len(args) > 1 else ""))
+        return 0
+    if cmd == "_looks-like-fix":
+        return 0 if looks_like_fix(" ".join(args[1:])) else 1
+    if cmd == "_fired":
+        if len(args) < 4:
+            sys.exit("usage: na _fired L### MODE SOURCE [REF]")
+        return cmd_fired(_lesson_id(args[1]), args[2], args[3], args[4] if len(args) > 4 else "")
+    if cmd == "_proceeded":
+        return cmd_proceeded(args[1:])
+    if cmd == "_gitignore":
+        return cmd_gitignore(args[1:])
+    if cmd == "_lessons-report":
+        return cmd_lessons_report()
+    if cmd == "_register":
+        return cmd_register()
+    if cmd == "_agents":
+        return cmd_agents(args[1:])
+    if cmd == "_index":
+        return cmd_index(False)
+    if cmd == "index":
+        return cmd_index(True)
+    if cmd == "import":
+        return cmd_import(args[1:])
+    if len(args) < 2:
+        sys.exit(f"usage: na {cmd} L###")
+    lid = _lesson_id(args[1])
+    if cmd == "ok":
+        return mark(lid, True)
+    if cmd == "wrong":
+        return mark(lid, False)
+    if cmd == "promote":
+        return set_mode(lid, "block")
+    if cmd == "demote":
+        return set_mode(lid, "warn")
+    if cmd == "retire":
+        return retire(lid)
+    if cmd == "why":
+        return why(lid)
+    sys.exit(USAGE)
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
