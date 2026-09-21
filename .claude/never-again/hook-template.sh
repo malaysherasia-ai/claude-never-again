@@ -46,15 +46,18 @@ DETAIL=""
 # done < <(na_changed_files .sh .bash)
 #
 # If the check is Python, hand it the files as ARGUMENTS. Its stdin carries the
-# script, so a list piped into it is silently lost:
+# script, so a list piped into it is silently lost. And never put the heredoc
+# inside $(...): bash 3.2 on macOS cannot parse a quote in it and the hook
+# dies with "unexpected end of file". Write to a file, then read the file:
 # mapfile -t FILES < <(na_changed_files .html .css)
 # [ "${#FILES[@]}" -eq 0 ] && exit 0
-# DETAIL="$("$NA_PY" - "$NA_ROOT" "${FILES[@]}" 2>/dev/null <<'PYEOF' || true
+# OUT="$(mktemp)"
+# "$NA_PY" - "$NA_ROOT" "${FILES[@]}" >"$OUT" 2>/dev/null <<'PYEOF' || true
 # import sys, os
 # root, files = sys.argv[1], sys.argv[2:]
 # ...print the hits, one string...
 # PYEOF
-# )"
+# DETAIL="$(cat "$OUT")"; rm -f "$OUT"
 # [ -n "$DETAIL" ] && VIOLATION=1
 
 # ----------------------------------------------------------------------------
