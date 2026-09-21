@@ -7,4 +7,7 @@ bugs in this repo — treat them as binding, not advisory.
 
 When a bug is fixed, a test is repaired, or the user corrects you, invoke the
 `never-again` skill to capture it. Do not write to `LESSONS.md` by hand.
+A commit that says it is a fix and files no lesson is stopped with a question
+at commit time; answer it with the skill, or `.claude/never-again/na none`
+when there is nothing to learn.
 <!-- END never-again -->

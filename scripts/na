@@ -11,7 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -30,6 +30,9 @@ Everything here is counted, not reasoned. It costs no tokens by design.
   na demote  L017 block -> warn
   na retire  L017 remove the rule line and deregister the hook; keep the archive
   na why     L017 print the full story
+  na none [why]   the next commit is a fix with nothing to learn: the capture
+                  check stays quiet for it ("capture": "off" in state.json
+                  turns the check off for good; "block" makes it refuse)
   na import       list the notes files already in this repo that the skill can
                   turn into lessons, and what has been imported so far
   na import --mark PATH [--filed N]   record that PATH was imported
@@ -364,6 +367,10 @@ def stats():
     state = load()
     rs = rules()
     fr = fires()
+    # The capture check is not a lesson: its fires are counted on their own
+    # line, never toward a streak or the prevented total.
+    nudges = [r for r in fr if r["id"] == CAPTURE_ID]
+    fr = [r for r in fr if r["id"] != CAPTURE_ID]
     lessons = state.get("lessons", {})
     hooks = {k: v for k, v in lessons.items() if v.get("form") == "hook"}
     blocking = [k for k, v in hooks.items() if v.get("mode") == "block"]
@@ -393,6 +400,14 @@ def stats():
     print(f"  warned past     {len(proceeded)}  (asked, and the person went ahead)")
     print(f"  est. tokens     ~{prevented * per:,} saved")
     print(f"                  (at {per:,}/repeat — edit in state.json)")
+    capture = state.get("capture", "warn")
+    if capture == "off":
+        print("  capture         off  (a fix committed with no lesson is not noticed)")
+    else:
+        stopped = sum(1 for r in nudges if r["outcome"] in ("declined", "blocked"))
+        went = sum(1 for r in nudges if r["outcome"] == "proceeded")
+        print(f"  capture nudges  {len(nudges)}  (a fix committed with no lesson filed:"
+              f" {stopped} stopped, {went} went ahead)")
 
     if fr:
         print()
@@ -430,6 +445,24 @@ def stats():
         print(f"  ! {len(loaded)} rules load on every turn from this directory.")
         print(f"    Compliance falls as the list grows. Split by package, retire, or promote.")
     print()
+
+
+CAPTURE_ID = "capture"
+CAPTURE_NONE = os.path.join(BASE, ".capture-none")
+
+
+def cmd_none(argv):
+    """`na none [why]`: the next commit is a fix with nothing worth a lesson.
+    Records HEAD; the capture check stays quiet while HEAD is that commit,
+    so the mark clears by itself once the commit lands."""
+    head = _git("rev-parse", "HEAD") or "initial"
+    why = " ".join(a for a in argv if not a.startswith("-")).strip()
+    os.makedirs(BASE, exist_ok=True)
+    with open(CAPTURE_NONE, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(head + "\n" + why + "\n")
+    print("capture: nothing to learn from the next commit"
+          + (" (%s)" % why if why else "") + ". The mark clears once it lands.")
+    return 0
 
 
 def mark(lid, correct):
@@ -631,6 +664,7 @@ GITIGNORE_HEADER = "# never-again (local only)"
 GITIGNORE_LINES = (".claude/never-again/fires.log",
                    ".claude/never-again/calls.log",
                    ".claude/never-again/.update-check",
+                   ".claude/never-again/.capture-none",
                    ".claude/never-again/verified/",
                    ".claude/never-again/.last-boot",
                    "CLAUDE.md.bak", "AGENTS.md.bak", "GEMINI.md.bak",
@@ -1272,7 +1306,8 @@ def cmd_import(argv):
     return 0
 
 
-GIT_STUB_MARK = "never-again pre-commit stub"
+# Every stub the installer writes carries this, whichever git hook it is for.
+GIT_STUB_MARK = "stub (managed by install.sh; uninstall removes it)"
 
 
 def git_hooks_dir():
@@ -1559,7 +1594,7 @@ def uninstall(argv):
     git_stubs = []
     hd = git_hooks_dir()
     if hd:
-        for name in ("pre-commit", "pre-merge-commit"):
+        for name in ("pre-commit", "pre-merge-commit", "commit-msg"):
             cand = os.path.join(hd, name)
             try:
                 if os.path.isfile(cand) and GIT_STUB_MARK in open(cand, encoding="utf-8", errors="replace").read():
@@ -1741,6 +1776,11 @@ def uninstall(argv):
     print()
     return 0
 
+def _lesson_id(arg):
+    """L017 however it was typed; the capture check's own id as it is."""
+    return arg.upper() if re.fullmatch(r"[lL]\d+", arg) else arg
+
+
 def main():
     args = sys.argv[1:]
     if not args or args[0] == "stats":
@@ -1765,10 +1805,12 @@ def main():
     if cmd == "_check-update":
         return cmd_check_update(args[1:])
     # Internal: called by the hooks, not by people.
+    if cmd == "none":
+        return cmd_none(args[1:])
     if cmd == "_fired":
         if len(args) < 4:
             sys.exit("usage: na _fired L### MODE SOURCE [REF]")
-        return cmd_fired(args[1].upper(), args[2], args[3], args[4] if len(args) > 4 else "")
+        return cmd_fired(_lesson_id(args[1]), args[2], args[3], args[4] if len(args) > 4 else "")
     if cmd == "_proceeded":
         return cmd_proceeded(args[1:])
     if cmd == "_gitignore":
@@ -1787,7 +1829,7 @@ def main():
         return cmd_import(args[1:])
     if len(args) < 2:
         sys.exit(f"usage: na {cmd} L###")
-    lid = args[1].upper()
+    lid = _lesson_id(args[1])
     if cmd == "ok":
         return mark(lid, True)
     if cmd == "wrong":

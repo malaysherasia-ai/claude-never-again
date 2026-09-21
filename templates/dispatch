@@ -99,6 +99,14 @@ while IFS=$'\t' read -r id mode trigger watch; do
   fi
 done <<<"$INDEX"
 
+# The capture check: a commit that says it is a fix and files no lesson.
+# Under git it runs from the commit-msg hook instead, which is where the
+# message first shows; the pre-commit runner has no message to read.
+if [ "$IS_COMMIT" -eq 1 ] && [ "$NA_SOURCE" != "git" ] && [ -f "$HOOKS_DIR/_capture.sh" ]; then
+  out="$(bash "$HOOKS_DIR/_capture.sh" </dev/null)"
+  [ -n "$out" ] && OUTS="$OUTS$out"$'\n'
+fi
+
 # One line per commit this dispatcher saw, whoever called it. Answers the
 # question a field run could not: did the agent call the hook at all?
 if [ "$IS_COMMIT" -eq 1 ] && [ -z "${NA_DRY_RUN:-}" ]; then

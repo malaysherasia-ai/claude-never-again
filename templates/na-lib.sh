@@ -269,6 +269,8 @@ na_fire() {
     block) decision="deny"; label="blocked" ;;
     *)     exit 0 ;;   # retired or unknown: silent
   esac
+  # The capture check is a question, not a rule about the tree.
+  [ "$NA_ID" = "capture" ] && [ "$mode" = "warn" ] && label="asks"
 
   if [ "$NA_SOURCE" = "git" ]; then
     # The git runner is the second look at a commit Claude Code already asked

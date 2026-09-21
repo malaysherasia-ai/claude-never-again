@@ -178,6 +178,30 @@ Filed L017 as a hook (warn mode) · 23 rules, 9 hooks
 Do not print a summary, a table, or a celebration. Those are tokens. The stats
 command exists for that and it is free.
 
+## When the commit asks you
+
+You will not always notice that a fix just happened. The capture check
+does: before a commit whose message says it is a fix (`fix`, `bug`,
+`revert`, `regression`, `broken` and the like) and that carries no lesson
+file, it asks, in the same shape as a warn-mode hook:
+
+```
+never-again capture asks: this commit looks like a fix (fix nav font) and files no lesson. ...
+```
+
+It runs from every agent's own hook and from git's `commit-msg` hook, so a
+commit from a terminal or from an agent whose hook never ran meets it too.
+When you see it, do one of two things and nothing else:
+
+- Run this skill from §1. A commit that carries the archive entry, the
+  rule line or a hook script satisfies the check by itself.
+- Decide it is rung 4 and say so with `.claude/never-again/na none <why>`,
+  as its own command before the commit. The mark clears once the commit
+  lands, so it never silences the next fix.
+
+Do not reword the commit message to get past it. `"capture": "off"` in
+`state.json` is the person's switch, not yours; `"block"` makes it refuse.
+
 ## Importing notes that predate the tool
 
 Most repositories already hold lessons somewhere: a `CLAUDE.md` full of
@@ -311,5 +335,8 @@ LESSONS.md                          the rules Claude reads (small, capped)
 .claude/hooks/na/na-verify.sh       the verify engine every verify hook sources
 .claude/hooks/na/na-manifest.py     what na-verify.sh compares the tree with
 .claude/hooks/na/_after.sh          records that a warned commit went ahead
+.claude/hooks/na/_capture.sh        asks when a fix is committed with no lesson filed
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
+.claude/hooks/na/commit-msg         runs the capture check from git, where the message shows
+.claude/never-again/.capture-none   the `na none` mark: HEAD it was given for — local, gitignored
 ```

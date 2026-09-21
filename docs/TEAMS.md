@@ -12,7 +12,7 @@ Built. This is the ground everything else stands on.
 |---|---|
 | `LESSONS.md` in every package: the rules | `fires.log`: every fire, its outcome and grade |
 | `.claude/hooks/na/L###.sh`: the hook scripts | `.claude/never-again/verified/`: verify manifests |
-| `state.json`: each lesson's mode, scope, file, verify block | `.git/hooks/pre-commit`: git never clones it |
+| `state.json`: each lesson's mode, scope, file, verify block, the capture setting | `.git/hooks/pre-commit` and `commit-msg`: git never clones them |
 | `archive/L###.md`: the full story of each lesson | `.claude/settings.json`: yours, often shared with other tooling |
 
 A fresh clone has every rule in the mode the team earned. It runs the
