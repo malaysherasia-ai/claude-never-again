@@ -31,56 +31,20 @@ NA_MODE="${NA_MODE//$'\r'/}"
 # The message. From git it is the file commit-msg hands over; the pre-commit
 # runner has none, and stays silent. From an agent it is the -m text in the
 # command; a commit that opens an editor is silent here and met by git.
+[ -f "$NA_CLI" ] || exit 0
 if [ "$NA_SOURCE" = "git" ]; then
   [ -n "${NA_MSG_FILE:-}" ] && [ -f "$NA_MSG_FILE" ] || exit 0
   MSG="$(grep -v '^#' "$NA_MSG_FILE" 2>/dev/null | head -c 4000)"
 else
-  MSG="$("$NA_PY" - "$NA_CMD" <<'PYEOF' 2>/dev/null || true
-import re, sys
-cmd = sys.argv[1]
-m = re.search(r'(^|[;&|(]|then |do |exec |sudo )\s*git(\s+(-[cC]\s+\S+|--?[A-Za-z-]+(=\S+)?))*\s+commit(?=\s|$)', cmd)
-if not m:
-    sys.exit(0)
-rest = cmd[m.end():]
-# The commit's own arguments end at the first chain operator outside quotes,
-# so a `&& git push origin fix/thing` after it is not read as the message.
-out, q, i = [], None, 0
-while i < len(rest):
-    c = rest[i]
-    if q:
-        if c == "\\" and q == '"':
-            out.append(rest[i:i + 2]); i += 2; continue
-        if c == q:
-            q = None
-        out.append(c)
-    elif c in ('"', "'"):
-        q = c; out.append(c)
-    elif c == "\\":
-        out.append(rest[i:i + 2]); i += 2; continue
-    elif rest.startswith(("&&", "||"), i) or c in ";|":
-        break
-    else:
-        out.append(c)
-    i += 1
-args = "".join(out)
-parts = re.findall(r'(?:^|\s)(?:-[a-zA-Z]*m|--message)[=\s]+("(?:[^"\\]|\\.)*"|\'[^\']*\'|\S+)', args)
-print(" ".join(parts))
-PYEOF
-)"
+  # The parsing is Python in `na`, not a heredoc here: bash 3.2 on macOS
+  # cannot read a quoted heredoc inside $(...).
+  MSG="$("$NA_PY" "$NA_CLI" _commit-message "$NA_CMD" 2>/dev/null)"; MSG="${MSG//$'\r'/}"
 fi
 [ -n "$MSG" ] || exit 0
 
 # A fix, by its own account. "typo" is the one word that says "not worth a
 # lesson" on its own; everything else is for the person to decide.
-if ! "$NA_PY" - "$MSG" <<'PYEOF' 2>/dev/null
-import re, sys
-msg = sys.argv[1]
-fix = re.compile(r"\b(fix|fixes|fixed|fixing|bugfix|hotfix|bug|bugs|revert|reverts|reverted|regression|broke|broken|workaround)\b", re.I)
-sys.exit(0 if fix.search(msg) and not re.search(r"\btypos?\b", msg, re.I) else 1)
-PYEOF
-then
-  exit 0
-fi
+"$NA_PY" "$NA_CLI" _looks-like-fix "$MSG" >/dev/null 2>&1 || exit 0
 
 # A lesson is being filed with it: the archive entry, the rule line or a hook
 # script. Any one of them is the answer this check wants. Not state.json: it

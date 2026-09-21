@@ -449,6 +449,48 @@ def stats():
 
 CAPTURE_ID = "capture"
 CAPTURE_NONE = os.path.join(BASE, ".capture-none")
+FIX_RE = re.compile(r"\b(fix|fixes|fixed|fixing|bugfix|hotfix|bug|bugs|revert|reverts|reverted"
+                    r"|regression|broke|broken|workaround)\b", re.I)
+TYPO_RE = re.compile(r"\btypos?\b", re.I)
+
+
+def commit_message(cmd):
+    """The -m text of the git commit in a shell command, or "" when there is
+    none (an editor, a -F file). Lives here rather than in the hook because
+    bash 3.2 on macOS cannot parse a quoted heredoc inside $(...)."""
+    m = re.search(r"(^|[;&|(]|then |do |exec |sudo )\s*git(\s+(-[cC]\s+\S+|--?[A-Za-z-]+(=\S+)?))*\s+commit(?=\s|$)", cmd)
+    if not m:
+        return ""
+    rest = cmd[m.end():]
+    # The commit's own arguments end at the first chain operator outside
+    # quotes, so a `&& git push origin fix/thing` after it is not the message.
+    out, q, i = [], None, 0
+    while i < len(rest):
+        c = rest[i]
+        if q:
+            if c == "\\" and q == '"':
+                out.append(rest[i:i + 2]); i += 2; continue
+            if c == q:
+                q = None
+            out.append(c)
+        elif c in ('"', "'"):
+            q = c; out.append(c)
+        elif c == "\\":
+            out.append(rest[i:i + 2]); i += 2; continue
+        elif rest.startswith(("&&", "||"), i) or c in ";|":
+            break
+        else:
+            out.append(c)
+        i += 1
+    args = "".join(out)
+    parts = re.findall(r'(?:^|\s)(?:-[a-zA-Z]*m|--message)[=\s]+("(?:[^"\\]|\\.)*"|\'[^\']*\'|\S+)', args)
+    return " ".join(parts)
+
+
+def looks_like_fix(msg):
+    """A fix by its own account. "typo" is the one word that says "not worth
+    a lesson" on its own; everything else is for the person to decide."""
+    return bool(FIX_RE.search(msg)) and not TYPO_RE.search(msg)
 
 
 def cmd_none(argv):
@@ -1807,6 +1849,11 @@ def main():
     # Internal: called by the hooks, not by people.
     if cmd == "none":
         return cmd_none(args[1:])
+    if cmd == "_commit-message":
+        print(commit_message(args[1] if len(args) > 1 else ""))
+        return 0
+    if cmd == "_looks-like-fix":
+        return 0 if looks_like_fix(" ".join(args[1:])) else 1
     if cmd == "_fired":
         if len(args) < 4:
             sys.exit("usage: na _fired L### MODE SOURCE [REF]")
