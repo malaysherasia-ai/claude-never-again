@@ -89,9 +89,12 @@ cp "$SRC/templates/na-lib.sh"       "$DEST/.claude/hooks/na/na-lib.sh"
 cp "$SRC/templates/na-verify.sh"    "$DEST/.claude/hooks/na/na-verify.sh"
 cp "$SRC/templates/after-commit.sh" "$DEST/.claude/hooks/na/_after.sh"
 cp "$SRC/templates/pre-commit"      "$DEST/.claude/hooks/na/pre-commit"
+cp "$SRC/templates/commit-msg"      "$DEST/.claude/hooks/na/commit-msg"
+cp "$SRC/templates/capture.sh"      "$DEST/.claude/hooks/na/_capture.sh"
 cp "$SRC/templates/dispatch"        "$DEST/.claude/hooks/na/dispatch"
-chmod +x "$DEST/.claude/hooks/na/_after.sh" "$DEST/.claude/hooks/na/pre-commit" "$DEST/.claude/hooks/na/dispatch"
-echo "  hooks      .claude/hooks/na/dispatch, na-lib.sh, na-verify.sh, na-manifest.py, _after.sh, pre-commit"
+chmod +x "$DEST/.claude/hooks/na/_after.sh" "$DEST/.claude/hooks/na/_capture.sh" \
+         "$DEST/.claude/hooks/na/pre-commit" "$DEST/.claude/hooks/na/commit-msg" "$DEST/.claude/hooks/na/dispatch"
+echo "  hooks      .claude/hooks/na/dispatch, na-lib.sh, na-verify.sh, na-manifest.py, _after.sh, _capture.sh, pre-commit, commit-msg"
 
 # --- git pre-commit -----------------------------------------------------------
 # A stub in git's hooks directory hands every commit to the runner, so a hook
@@ -99,54 +102,57 @@ echo "  hooks      .claude/hooks/na/dispatch, na-lib.sh, na-verify.sh, na-manife
 # A pre-commit hook we did not write is never edited; we say what to add. A
 # stub we wrote is rewritten only if it is exactly a stub we wrote, so lines
 # a person added to it survive.
+# na_stub RUNNER — the stub for .claude/hooks/na/RUNNER.
 na_stub() {
-  cat <<'SHEOF'
+  cat <<SHEOF
 #!/bin/sh
-# never-again pre-commit stub (managed by install.sh; uninstall removes it)
-r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
-if [ ! -f "$r" ]; then
-  echo "never-again: .claude/hooks/na/pre-commit is missing, so no hook ran. Re-run install.sh, or delete .git/hooks/pre-commit." >&2
+# never-again $1 stub (managed by install.sh; uninstall removes it)
+r="\$(git rev-parse --show-toplevel)/.claude/hooks/na/$1"
+if [ ! -f "\$r" ]; then
+  echo "never-again: .claude/hooks/na/$1 is missing, so no hook ran. Re-run install.sh, or delete .git/hooks/$1." >&2
   exit 0
 fi
-exec "$r" "$@"
+exec "\$r" "\$@"
 SHEOF
 }
 na_old_stub() {
-  cat <<'SHEOF'
+  cat <<SHEOF
 #!/bin/sh
-# never-again pre-commit stub (managed by install.sh; uninstall removes it)
-exec "$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit" "$@"
+# never-again $1 stub (managed by install.sh; uninstall removes it)
+exec "\$(git rev-parse --show-toplevel)/.claude/hooks/na/$1" "\$@"
 SHEOF
 }
 na_old_stub_2() {
-  cat <<'SHEOF'
+  cat <<SHEOF
 #!/bin/sh
-# never-again pre-commit stub (managed by install.sh; uninstall removes it)
-r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
-[ -f "$r" ] || exit 0
-exec "$r" "$@"
+# never-again $1 stub (managed by install.sh; uninstall removes it)
+r="\$(git rev-parse --show-toplevel)/.claude/hooks/na/$1"
+[ -f "\$r" ] || exit 0
+exec "\$r" "\$@"
 SHEOF
 }
 if HOOKDIR="$(git -C "$DEST" rev-parse --git-path hooks 2>/dev/null)"; then
   case "$HOOKDIR" in /*|[A-Za-z]:*) ;; *) HOOKDIR="$DEST/$HOOKDIR" ;; esac
   mkdir -p "$HOOKDIR"
-  # pre-commit covers `git commit`; pre-merge-commit covers `git merge`.
-  # Cherry-pick and rebase run neither, and the README says so.
-  for STUBNAME in pre-commit pre-merge-commit; do
+  # pre-commit covers `git commit`; pre-merge-commit covers `git merge`; both
+  # run the lesson hooks. commit-msg runs the capture check, which needs the
+  # message. Cherry-pick and rebase run none of them, and the README says so.
+  for STUBNAME in pre-commit pre-merge-commit commit-msg; do
     STUB="$HOOKDIR/$STUBNAME"
+    RUNNER=pre-commit; [ "$STUBNAME" = commit-msg ] && RUNNER=commit-msg
     if [ ! -f "$STUB" ]; then
-      na_stub >"$STUB"; chmod +x "$STUB"
+      na_stub "$RUNNER" >"$STUB"; chmod +x "$STUB"
       echo "  git        $STUBNAME stub installed"
-    elif [ "$(cat "$STUB")" = "$(na_stub)" ]; then
+    elif [ "$(cat "$STUB")" = "$(na_stub "$RUNNER")" ]; then
       echo "  git        $STUBNAME stub already in place"
-    elif [ "$(cat "$STUB")" = "$(na_old_stub)" ] || [ "$(cat "$STUB")" = "$(na_old_stub_2)" ]; then
-      na_stub >"$STUB"; chmod +x "$STUB"
+    elif [ "$(cat "$STUB")" = "$(na_old_stub "$RUNNER")" ] || [ "$(cat "$STUB")" = "$(na_old_stub_2 "$RUNNER")" ]; then
+      na_stub "$RUNNER" >"$STUB"; chmod +x "$STUB"
       echo "  git        $STUBNAME stub upgraded"
     elif grep -q "never-again" "$STUB"; then
       echo "  git        $STUBNAME already calls never-again (edited by hand, left alone)"
     else
       echo "  git        you already have a $STUBNAME hook; add this line to it:"
-      echo '             "$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit" || exit 1'
+      echo "             \"\$(git rev-parse --show-toplevel)/.claude/hooks/na/$RUNNER\" \"\$@\" || exit 1"
     fi
   done
 else
@@ -179,6 +185,7 @@ else
   "tokensPerPreventedRepeat": 8000,
   "promotion": "pull-request",
   "updates": "check",
+  "capture": "warn",
   "lessons": {}
 }
 JSON
@@ -329,9 +336,11 @@ Done. LESSONS.md and the hooks are meant to be committed — they are team
 knowledge. Only fires.log, the verified manifests and CLAUDE.md.bak stay local.
 A fresh clone runs this installer once: git does not clone its hooks folder.
 
-Next: fix a bug, then tell your agent "never again". If the repo already has
-notes (na import lists them), say "import the existing notes with the
-never-again skill" so they count from day one.
+Next: fix a bug, then tell your agent "never again". A commit that says it
+is a fix and files no lesson is noticed at commit time, whichever tool made
+it; answer with the skill, or `na none` when there is nothing to learn. If
+the repo already has notes (na import lists them), say "import the existing
+notes with the never-again skill" so they count from day one.
 
 Other agents: --agent codex|gemini|copilot|antigravity registers the same
 hooks with them (Codex asks you to trust the hook once: /hooks).

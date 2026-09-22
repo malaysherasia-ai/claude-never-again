@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "nextId": 5,
+  "cap": 40,
+  "loadedWarn": 60,
+  "tokensPerPreventedRepeat": 8000,
+  "promotion": "pull-request",
+  "updates": "check",
+  "capture": "warn",
+  "lessons": {
+    "L001": {
+      "scope": "shell",
+      "form": "hook",
+      "mode": "warn",
+      "filed": "2026-09-21",
+      "file": "LESSONS.md",
+      "hook": ".claude/hooks/na/L001.sh",
+      "rule": "No heredoc inside $(...): bash 3.2 on macOS cannot parse it"
+    },
+    "L002": {
+      "scope": "tests",
+      "form": "rule",
+      "filed": "2026-09-21",
+      "file": "LESSONS.md",
+      "rule": "grep -c exits 1 on zero matches; never chain || echo 0 after it"
+    },
+    "L003": {
+      "scope": "hooks",
+      "form": "rule",
+      "filed": "2026-09-21",
+      "file": "LESSONS.md",
+      "rule": "Evidence that something happened must be a file that changes for that reason only"
+    },
+    "L004": {
+      "scope": "hooks",
+      "form": "rule",
+      "filed": "2026-09-22",
+      "file": "LESSONS.md",
+      "rule": "Walk a commit-time check through merge, amend, -v, no -m, commentChar and the first commit before it ships"
+    }
+  }
+}

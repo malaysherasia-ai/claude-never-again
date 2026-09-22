@@ -2,6 +2,41 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.6.0] — 2026-09-21
+
+From the fifth field run, on a site built with Antigravity: four real
+lessons sat in the repo until someone typed a prompt asking for them. The
+one step of never-again that still ran on a reminder was the first one,
+noticing that a fix just happened. A line in `CLAUDE.md` asked the agent to
+invoke the skill, and a line in `CLAUDE.md` is what this tool exists to
+replace.
+
+### Added
+
+- **The capture check.** Before a commit whose message says it is a fix
+  (`fix`, `bug`, `revert`, `regression`, `broken` and the like) and that
+  carries no lesson file, the agent is asked, in the same shape as a
+  warn-mode hook: file the lesson with the skill, or say there is nothing
+  to learn. A commit that mentions a typo is left alone. The check runs
+  from the dispatcher under every agent, and from git's own `commit-msg`
+  hook, which is the first moment git shows the message, so a commit from
+  a terminal or from an agent whose hook never ran meets it too. One
+  question per commit: git stays quiet after the agent's hook already asked
+  about the same tree, a merge is not asked (its commits already were),
+  and neither is an amend. Under git the message is read the way git
+  reads it: no comment lines, nothing below the scissors line that
+  `git commit -v` adds.
+- **`na none [why]`** marks the next commit as nothing to learn. The mark
+  is HEAD, so it clears once the commit lands and cannot silence the next
+  fix. In the same command as the commit, the command text counts, since
+  the hook cannot see the file yet.
+- **`"capture"` in `state.json`**: `"warn"` (the default, also when the key
+  is missing), `"block"` to refuse such a commit, `"off"` to turn the check
+  off. `na` shows the nudges on their own line; they never count toward a
+  streak or the prevented total.
+- A `commit-msg` stub next to the `pre-commit` one. The installer writes
+  it, uninstall removes it, the README's by-hand snippet includes it.
+
 ## [1.5.0] — 2026-09-18
 
 From the fourth Antigravity run, which also settled that the Antigravity

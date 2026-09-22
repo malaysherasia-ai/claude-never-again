@@ -76,7 +76,7 @@ pay() {  # pay AGENT CMD -> that agent's PreToolUse payload
   esac
 }
 dispatch() { printf '{"tool_input":{"command":%s}%s}' "$("$PYBIN" -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1")" "${2:+,\"tool_use_id\":\"$2\"}" | bash .claude/hooks/na/dispatch; }
-logn() { [ -f "$LOG" ] && grep -c . "$LOG" || echo 0; }
+logn() { if [ -f "$LOG" ]; then grep -c . "$LOG" || true; else echo 0; fi; }   # grep -c prints 0 and exits 1 on an empty file
 col() { awk -F'\t' -v n="$1" 'END{print $n}' "$LOG"; }    # last line, column n
 
 echo "=== install ==="
@@ -86,6 +86,8 @@ check "resolver installed"         '[ -x .claude/hooks/na/_after.sh ]'
 check "git runner installed"       '[ -x .claude/hooks/na/pre-commit ]'
 check "git stub installed"         'grep -q never-again .git/hooks/pre-commit'
 check "merge stub installed"       'grep -q never-again .git/hooks/pre-merge-commit'
+check "commit-msg stub installed"  'grep -q "hooks/na/commit-msg" .git/hooks/commit-msg'
+check "capture check installed"    '[ -x .claude/hooks/na/_capture.sh ] && [ -x .claude/hooks/na/commit-msg ]'
 check "na --version answers"       '"$PYBIN" $NA --version | grep -q "never-again 1\."'
 check "na --help answers"          '"$PYBIN" $NA --help | grep -q "na sort"'
 check "resolver registered"        'grep -q _after.sh .claude/settings.json'
@@ -324,6 +326,103 @@ ERR="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"
 check "git runner stays quiet after Claude asked" '[ -z "$ERR" ]'
 check "and records that the person proceeded"  '[ "$(logn)" -eq 1 ] && [ "$(col 5)" = proceeded ]'
 git commit -qm x 2>/dev/null
+
+echo
+echo "=== a fix committed with no lesson is asked about ==="
+# The check reads the message: from the command under an agent, from the
+# file under git's commit-msg hook. It wants a lesson file in the commit,
+# or an `na none` since the last commit. Nothing else satisfies it.
+# The install's own files must be in HEAD first, or every commit from here
+# would look like it carries a lesson.
+git add -A >/dev/null 2>&1; git commit -qm "install files" >/dev/null 2>&1
+: > "$LOG"
+cap() { NA_DRY_RUN=1 dispatch "$1"; }
+# Outside the repo: a file inside it would change the tree between the
+# agent's fire and git's second look, and git would ask twice.
+CMSG="$TMPDIR_ROOT/na-capture-msg.txt"
+gitcap() { printf '%s\n' "$1" > "$CMSG"; NA_DRY_RUN="${2-1}" bash .claude/hooks/na/commit-msg "$CMSG" 2>&1 >/dev/null; }
+echo plain > cap.txt
+check "clean tree, ordinary message: silent"  '[ -z "$(cap "git commit -m \"add the footer\"")" ]'
+check "a fix with no lesson: asks"            'cap "git add cap.txt && git commit -m \"fix the footer\"" | grep -q "capture asks"'
+check "the reason names the skill and na none" 'cap "git commit -m \"fix the footer\"" | grep -q "never-again skill" && cap "git commit -m \"fix the footer\"" | grep -q "na none"'
+check "conventional fix: asks"                'cap "git commit -m \"fix(nav): weight\"" | grep -q "\"ask\""'
+check "revert: asks"                          'cap "git commit -m \"Revert the footer change\"" | grep -q "\"ask\""'
+check "-am: asks"                             'cap "git commit -am \"bug in the footer\"" | grep -q "\"ask\""'
+check "a heredoc message: asks"               'cap "git commit -m \"\$(cat <<'"'"'EOF'"'"'
+fix the footer
+
+Co-Authored-By: x
+EOF
+)\"" | grep -q "\"ask\""'
+check "-m with no space: asks"                'cap "git commit -m\"fix the footer\"" | grep -q "\"ask\""'
+CMDQ="git commit -m 'it'\"'\"'s fixed now'"
+check "a shell-joined quote: asks"            'cap "$CMDQ" | grep -q "\"ask\""'
+check "--amend: silent, it was asked already" '[ -z "$(cap "git commit --amend -m \"fix the footer\"")" ]'
+check "a typo fix: silent"                    '[ -z "$(cap "git commit -m \"fix typo in footer\"")" ]'
+check "fix in a branch name after the commit: silent" '[ -z "$(cap "git commit -m \"add the footer\" && git push origin fix/footer")" ]'
+check "fix in a path before the commit: silent" '[ -z "$(cap "git add fix.js && git commit -m \"add the footer\"")" ]'
+check "no -m (editor): silent, git decides"   '[ -z "$(cap "git commit")" ]'
+check "not a commit: silent"                  '[ -z "$(cap "echo fix the footer")" ]'
+mkdir -p .claude/never-again/archive && echo story > .claude/never-again/archive/L050.md
+check "an archive entry in the commit: silent" '[ -z "$(cap "git add -A && git commit -m \"fix the footer\"")" ]'
+rm -f .claude/never-again/archive/L050.md
+printf -- '- [web] Set the weight — when: nav (L050)\n' >> LESSONS.md
+check "a rule line in the commit: silent"     '[ -z "$(cap "git commit -am \"fix the footer\"")" ]'
+git checkout -q LESSONS.md
+check "na none marks the next commit"         '"$PYBIN" $NA none "one-off" | grep -q "nothing to learn" && [ -f .claude/never-again/.capture-none ]'
+check "after na none: silent"                 '[ -z "$(cap "git commit -m \"fix the footer\"")" ]'
+check "the mark is ignored by git"            'git check-ignore -q .claude/never-again/.capture-none'
+git add cap.txt && git commit -qm "add cap" 2>/dev/null
+check "the mark clears when a commit lands"   'cap "git commit -m \"fix the footer\"" | grep -q "\"ask\""'
+check "na none in the same command: silent"   '[ -z "$(cap ".claude/never-again/na none && git commit -m \"fix the footer\"")" ]'
+check "dry run wrote nothing"                 '[ "$(logn)" -eq 0 ]'
+echo "--- from git, where the message first shows"
+echo again > cap.txt; git add cap.txt
+check "commit-msg: a fix with no lesson warns on stderr" 'gitcap "fix the footer" | grep -q "capture asks"'
+check "commit-msg: ordinary message is silent" '[ -z "$(gitcap "add the footer")" ]'
+check "commit-msg: comment lines are not the message" '[ -z "$(gitcap "# fix nothing, this is a comment")" ]'
+check "commit-msg: a merge is not asked"      '[ -z "$(gitcap "Merge branch '"'"'fix/footer'"'"' into main")" ]'
+check "commit-msg: -v diff below the scissors is not the message" '[ -z "$(gitcap "add the footer
+# ------------------------ >8 ------------------------
++// a bug lives here")" ]'
+check "pre-commit runner has no message: silent" '[ -z "$(NA_DRY_RUN=1 bash .claude/hooks/na/pre-commit 2>&1)" ]'
+gitcap "fix the footer" "" >/dev/null
+check "a live git fire is logged as capture"  '[ "$(col 2)" = capture ] && [ "$(col 4)" = git ] && [ "$(col 5)" = proceeded ]'
+: > "$LOG"
+dispatch "git commit -m \"fix the footer\"" tcap >/dev/null
+check "agent fire is pending under its id"    '[ "$(col 2)" = capture ] && [ "$(col 5)" = pending ]'
+check "git stays quiet after the agent asked" '[ -z "$(gitcap "fix the footer" "")" ] && [ "$(logn)" -eq 1 ] && [ "$(col 5)" = proceeded ]'
+OUTC="$("$PYBIN" $NA)"
+check "na counts nudges on their own line"    'echo "$OUTC" | grep -q "capture nudges  1" && echo "$OUTC" | grep -q "hook fires      0"'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['capture'] = 'block'
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+check "block: agent side denies"              'cap "git commit -m \"fix the footer\"" | grep -q "\"deny\""'
+ERR="$(git commit -qm "fix the footer" 2>&1)"; RC=$?
+check "block: a real git commit is refused"   '[ $RC -ne 0 ] && echo "$ERR" | grep -q "capture blocked"'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['capture'] = 'off'
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+check "off: silent everywhere"                '[ -z "$(cap "git commit -m \"fix the footer\"")" ] && [ -z "$(gitcap "fix the footer")" ]'
+check "off: na says so"                       '"$PYBIN" $NA | grep -q "capture         off"'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); del st['capture']
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+check "no key: warn is the default"           'cap "git commit -m \"fix the footer\"" | grep -q "\"ask\""'
+ERR="$(git commit -qm "fix the footer" 2>&1)"; RC=$?
+check "warn: a real git commit goes through, with the question" '[ $RC -eq 0 ] && echo "$ERR" | grep -q "capture asks"'
+ERR="$(git commit --amend --no-edit 2>&1)"; RC=$?
+check "amend from git: not asked again"       '[ $RC -eq 0 ] && ! echo "$ERR" | grep -q "capture asks"'
+rm -f "$CMSG"; : > "$LOG"
 
 echo
 echo "=== retire stops the cost ==="

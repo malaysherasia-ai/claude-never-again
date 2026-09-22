@@ -71,6 +71,14 @@ r="$(git rev-parse --show-toplevel)/.claude/hooks/na/pre-commit"
 exec "$r" "$@"
 ```
 
+```sh
+# .git/hooks/commit-msg: the same, for the capture check, which needs the message
+#!/bin/sh
+r="$(git rev-parse --show-toplevel)/.claude/hooks/na/commit-msg"
+[ -f "$r" ] || exit 0
+exec "$r" "$@"
+```
+
 The same goes for `na`, the stats command. In auto mode Claude Code may
 refuse to run it. Run it from a terminal.
 
@@ -124,7 +132,24 @@ belongs where, and it writes the hook for you.
 ## What it actually does
 
 **1. You fix a bug.** Then you say "never again", or Claude notices the
-correction on its own.
+correction on its own. And if neither happens, the commit does: a commit
+whose message says it is a fix (`fix`, `bug`, `revert`, `regression`,
+`broken`) and that carries no lesson gets one question before it lands,
+from the agent's own hook and from git's `commit-msg` hook alike:
+
+```
+never-again capture asks: this commit looks like a fix (fix nav font) and files no lesson.
+Use the never-again skill to capture what went wrong, or run .claude/never-again/na none
+if there is nothing to learn
+```
+
+The agent answers by running the skill, or by `na none <why>` when the fix
+teaches nothing. The mark clears once the commit lands, so it cannot silence
+the next one. A commit that mentions a typo is left alone. `"capture": "off"`
+in `state.json` turns the question off; `"block"` makes it refuse instead.
+It is the one part of the loop that used to depend on the agent reading
+`CLAUDE.md`, and the field showed what that was worth: four real lessons sat
+in a repo until someone typed a prompt asking for them.
 
 **2. It sorts the lesson.** Four options, first fit wins:
 
@@ -169,9 +194,10 @@ reviewed like code. The other options are anyone, or a list of names.
 grades, who promotes, and packs.
 
 **4. It guards every commit, not only Claude's.** The same script runs from
-git's own pre-commit and pre-merge-commit hooks. A commit or a merge from a
-terminal, another agent, or a different tool meets the same rule. Warn mode
-prints and lets it through. Block mode refuses it.
+git's own pre-commit and pre-merge-commit hooks, and the capture check from
+its commit-msg hook. A commit or a merge from a terminal, another agent, or
+a different tool meets the same rule. Warn mode prints and lets it through.
+Block mode refuses it.
 
 What it does not cover, so you know the edge: `git cherry-pick` and
 `git rebase` create commits without running those git hooks, and a merge
@@ -233,6 +259,7 @@ $ na
   warned past     9   (asked, and the person went ahead)
   est. tokens     ~184,000 saved
                   (at 8,000/repeat — edit in state.json)
+  capture nudges  6   (a fix committed with no lesson filed: 4 stopped, 2 went ahead)
 
   per hook        fires  denied  declined  proceeded  ok  wrong  streak
     L001             14      11         2          1   0      0       5
@@ -392,7 +419,9 @@ CLAUDE.md                           one marked block added at the end; never ove
 .claude/hooks/na/na-lib.sh          shared by every hook
 .claude/hooks/na/na-verify.sh       the "X must pass before commit" engine, plus na-manifest.py
 .claude/hooks/na/_after.sh          records that a warned commit went ahead
+.claude/hooks/na/_capture.sh        asks when a fix is committed with no lesson filed
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
+.claude/hooks/na/commit-msg         runs the capture check from git, where the message shows
 .claude/settings.json               two entries, dispatch and _after.sh; merged, never replaced
 AGENTS.md, GEMINI.md,
   .github/copilot-instructions.md   the same block, only for the agents you registered
@@ -402,14 +431,15 @@ AGENTS.md, GEMINI.md,
 .agents/skills/, .gemini/skills/,
   .github/skills/                   the skill, copied for that agent
 ~/.never-again/launch               outside the repo: what those entries run; same on every machine
-.git/hooks/pre-commit               a short stub, only if you had none; pre-merge-commit likewise
+.git/hooks/pre-commit               a short stub, only if you had none; pre-merge-commit and commit-msg likewise
 .claude/never-again/
   ├── na                            the stats command  (na.cmd for PowerShell)
-  ├── state.json                    lesson index, hook modes
+  ├── state.json                    lesson index, hook modes, the capture setting
   ├── archive/L###.md               the full story, read only when asked
   ├── verified/                     one record per verify hook; local, gitignored
   ├── fires.log                     every fire, its outcome and grade; local, gitignored
   ├── calls.log                     one line per commit the dispatcher saw; local, gitignored
+  ├── .capture-none                 the `na none` mark, cleared by the next commit; local, gitignored
   └── .update-check                 the once-a-day release check; local, gitignored
 ```
 
@@ -462,6 +492,7 @@ removes nothing, so it is safe to pipe.
   remove   .claude/hooks/na/                  7 file(s)
   remove   .claude/never-again/               9 file(s)
   remove   .git/hooks/pre-commit              git pre-commit stub
+  remove   .git/hooks/commit-msg              git commit-msg stub
   edit     CLAUDE.md                          strip the never-again block, keep the rest
   edit     .claude/settings.json              remove 4 hook entries, keep everything else
   edit     .gitignore                         remove the never-again section

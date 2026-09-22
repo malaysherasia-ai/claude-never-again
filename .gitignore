@@ -1,0 +1,11 @@
+# never-again (local only)
+.claude/never-again/fires.log
+.claude/never-again/calls.log
+.claude/never-again/.update-check
+.claude/never-again/.capture-none
+.claude/never-again/verified/
+.claude/never-again/.last-boot
+CLAUDE.md.bak
+AGENTS.md.bak
+GEMINI.md.bak
+.github/copilot-instructions.md.bak
