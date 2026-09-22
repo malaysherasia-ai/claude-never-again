@@ -18,33 +18,36 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
 
 na_begin "capture" "commit"
-
-NA_MODE="$("$NA_PY" -c 'import json, sys
-try:
-    m = json.load(open(sys.argv[1], encoding="utf-8")).get("capture", "warn")
-except Exception:
-    m = "warn"
-print(m if m in ("warn", "block", "off") else "warn")' "$NA_STATE" 2>/dev/null || echo warn)"
-NA_MODE="${NA_MODE//$'\r'/}"
-[ "$NA_MODE" = "off" ] && exit 0
-
-# The message. From git it is the file commit-msg hands over; the pre-commit
-# runner has none, and stays silent. From an agent it is the -m text in the
-# command; a commit that opens an editor is silent here and met by git.
 [ -f "$NA_CLI" ] || exit 0
-if [ "$NA_SOURCE" = "git" ]; then
-  [ -n "${NA_MSG_FILE:-}" ] && [ -f "$NA_MSG_FILE" ] || exit 0
-  MSG="$(grep -v '^#' "$NA_MSG_FILE" 2>/dev/null | head -c 4000)"
-else
-  # The parsing is Python in `na`, not a heredoc here: bash 3.2 on macOS
-  # cannot read a quoted heredoc inside $(...).
-  MSG="$("$NA_PY" "$NA_CLI" _commit-message "$NA_CMD" 2>/dev/null)"; MSG="${MSG//$'\r'/}"
-fi
-[ -n "$MSG" ] || exit 0
+NA_LABEL="asks"
 
-# A fix, by its own account. "typo" is the one word that says "not worth a
-# lesson" on its own; everything else is for the person to decide.
-"$NA_PY" "$NA_CLI" _looks-like-fix "$MSG" >/dev/null 2>&1 || exit 0
+# Not a commit of its own: a merge's message names a branch whose commits
+# already answered, and an amend re-asks about a commit that was asked.
+if [ "$NA_SOURCE" = "git" ]; then
+  [ -n "${NA_MSG_FILE:-}" ] && [ -f "$NA_MSG_FILE" ] || exit 0   # pre-commit has no message
+  [ -f "$(git -C "$NA_ROOT" rev-parse --git-path MERGE_HEAD 2>/dev/null)" ] && exit 0
+else
+  case " $NA_CMD " in *" --amend "*|*" --amend="*) exit 0 ;; esac
+fi
+
+# One interpreter start: the mode, and the message only when it looks like
+# a fix. From git the message file is read the way git will, without the
+# comment lines and nothing below the scissors line `git commit -v` adds.
+if [ "$NA_SOURCE" = "git" ]; then
+  CC="$(git -C "$NA_ROOT" config --get core.commentChar 2>/dev/null)"; CC="${CC:-#}"; [ "$CC" = auto ] && CC="#"
+  OUT="$("$NA_PY" "$NA_CLI" _capture --file "$NA_MSG_FILE" --comment-char "$CC" 2>/dev/null)"
+else
+  OUT="$("$NA_PY" "$NA_CLI" _capture --cmd "$NA_CMD" 2>/dev/null)"
+fi
+OUT="${OUT//$'\r'/}"
+NA_MODE="${OUT%%$'\n'*}"; MSG="${OUT#*$'\n'}"
+[ "$NA_MODE" = "off" ] && exit 0
+[ -n "$MSG" ] && [ "$MSG" != "$OUT" ] || exit 0
+
+# An amend from git keeps the message it had; that commit was asked already.
+if [ "$NA_SOURCE" = "git" ] && [ "$(git -C "$NA_ROOT" log -1 --format=%B 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/ $//')" = "$MSG" ]; then
+  exit 0
+fi
 
 # A lesson is being filed with it: the archive entry, the rule line or a hook
 # script. Any one of them is the answer this check wants. Not state.json: it
@@ -59,12 +62,12 @@ fi
 # PreToolUse cannot see the file yet, so the command text counts too.
 NONE="$NA_ROOT/.claude/never-again/.capture-none"
 if [ -f "$NONE" ]; then
-  HEAD_NOW="$(git -C "$NA_ROOT" rev-parse HEAD 2>/dev/null || echo initial)"
+  HEAD_NOW="$(git -C "$NA_ROOT" rev-parse --verify -q HEAD 2>/dev/null)"; HEAD_NOW="${HEAD_NOW:-initial}"
   [ "$(head -n 1 "$NONE" | tr -d '\r')" = "$HEAD_NOW" ] && exit 0
 fi
 if [ "$NA_SOURCE" != "git" ] && [[ "$NA_CMD" =~ (^|[\;\&\|[:space:]/])na[[:space:]]+none([[:space:]]|$) ]]; then
   exit 0
 fi
 
-SHORT="$(printf '%s' "$MSG" | tr '\n\t' '  ' | sed -e 's/^ *//' | cut -c1-72)"
+SHORT="$(printf '%s' "$MSG" | cut -c1-72)"
 na_fire "this commit looks like a fix ($SHORT) and files no lesson. Use the never-again skill to capture what went wrong, or run .claude/never-again/na none if there is nothing to learn"

@@ -454,10 +454,16 @@ FIX_RE = re.compile(r"\b(fix|fixes|fixed|fixing|bugfix|hotfix|bug|bugs|revert|re
 TYPO_RE = re.compile(r"\btypos?\b", re.I)
 
 
+SCISSORS = " ------------------------ >8 ------------------------"
+
+
 def commit_message(cmd):
     """The -m text of the git commit in a shell command, or "" when there is
     none (an editor, a -F file). Lives here rather than in the hook because
-    bash 3.2 on macOS cannot parse a quoted heredoc inside $(...)."""
+    bash 3.2 on macOS cannot parse a quoted heredoc inside $(...).
+    The segment regex is na_is_commit's from na-lib.sh, in Python's dialect;
+    the dispatcher has already decided this is a commit, so this only has
+    to find where the commit's own arguments start. Keep the two in step."""
     m = re.search(r"(^|[;&|(]|then |do |exec |sudo )\s*git(\s+(-[cC]\s+\S+|--?[A-Za-z-]+(=\S+)?))*\s+commit(?=\s|$)", cmd)
     if not m:
         return ""
@@ -483,21 +489,69 @@ def commit_message(cmd):
             out.append(c)
         i += 1
     args = "".join(out)
-    parts = re.findall(r'(?:^|\s)(?:-[a-zA-Z]*m|--message)[=\s]+("(?:[^"\\]|\\.)*"|\'[^\']*\'|\S+)', args)
+    # -m "x", -m"x", -am x, --message=x, and a shell-joined 'it'"'"'s x.
+    parts = re.findall(r'(?:^|\s)(?:-[a-zA-Z]*m|--message)(?:=|\s*)'
+                       r'((?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\s"\'])+)', args)
     return " ".join(parts)
+
+
+def message_file_text(path, comment_char):
+    """What git will keep of a commit message file: nothing from the
+    scissors line down (`git commit -v` puts the whole diff there), no
+    comment lines, honouring core.commentChar."""
+    cc = comment_char or "#"
+    kept = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for ln in fh:
+                ln = ln.rstrip("\r\n")
+                if ln == cc + SCISSORS:
+                    break
+                if ln.startswith(cc):
+                    continue
+                kept.append(ln)
+    except OSError:
+        return ""
+    return "\n".join(kept).strip()[:4000]
 
 
 def looks_like_fix(msg):
     """A fix by its own account. "typo" is the one word that says "not worth
-    a lesson" on its own; everything else is for the person to decide."""
+    a lesson" on its own; everything else is for the person to decide. A
+    merge's own message names the branch it merges, and every commit on
+    that branch already answered, so merges are not asked."""
+    if re.match(r"\s*Merge (branch|remote-tracking branch|pull request|tag|commit)\b", msg):
+        return False
     return bool(FIX_RE.search(msg)) and not TYPO_RE.search(msg)
+
+
+def cmd_capture(argv):
+    """`na _capture --cmd CMD | --file PATH [--comment-char C]`: everything
+    the capture check needs in one interpreter start. Prints two lines: the
+    mode (warn, block, off) and the message when it looks like a fix, else
+    an empty line."""
+    try:
+        mode = load().get("capture", "warn")
+    except (OSError, ValueError):
+        mode = "warn"
+    if mode not in ("warn", "block", "off"):
+        mode = "warn"
+    msg = ""
+    if "--cmd" in argv:
+        msg = commit_message(argv[argv.index("--cmd") + 1])
+    elif "--file" in argv:
+        cc = argv[argv.index("--comment-char") + 1] if "--comment-char" in argv else "#"
+        msg = message_file_text(argv[argv.index("--file") + 1], cc)
+    print(mode)
+    print(" ".join(msg.split()) if msg and looks_like_fix(msg) else "")
+    return 0
 
 
 def cmd_none(argv):
     """`na none [why]`: the next commit is a fix with nothing worth a lesson.
     Records HEAD; the capture check stays quiet while HEAD is that commit,
     so the mark clears by itself once the commit lands."""
-    head = _git("rev-parse", "HEAD") or "initial"
+    head = _git("rev-parse", "--verify", "-q", "HEAD") or "initial"   # unborn branch: "initial"
     why = " ".join(a for a in argv if not a.startswith("-")).strip()
     os.makedirs(BASE, exist_ok=True)
     with open(CAPTURE_NONE, "w", encoding="utf-8", newline="\n") as fh:
@@ -1849,11 +1903,8 @@ def main():
     # Internal: called by the hooks, not by people.
     if cmd == "none":
         return cmd_none(args[1:])
-    if cmd == "_commit-message":
-        print(commit_message(args[1] if len(args) > 1 else ""))
-        return 0
-    if cmd == "_looks-like-fix":
-        return 0 if looks_like_fix(" ".join(args[1:])) else 1
+    if cmd == "_capture":
+        return cmd_capture(args[1:])
     if cmd == "_fired":
         if len(args) < 4:
             sys.exit("usage: na _fired L### MODE SOURCE [REF]")

@@ -22,7 +22,10 @@ replace.
   hook, which is the first moment git shows the message, so a commit from
   a terminal or from an agent whose hook never ran meets it too. One
   question per commit: git stays quiet after the agent's hook already asked
-  about the same tree.
+  about the same tree, a merge is not asked (its commits already were),
+  and neither is an amend. Under git the message is read the way git
+  reads it: no comment lines, nothing below the scissors line that
+  `git commit -v` adds.
 - **`na none [why]`** marks the next commit as nothing to learn. The mark
   is HEAD, so it clears once the commit lands and cannot silence the next
   fix. In the same command as the commit, the command text counts, since

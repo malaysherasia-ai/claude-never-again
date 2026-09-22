@@ -354,6 +354,10 @@ fix the footer
 Co-Authored-By: x
 EOF
 )\"" | grep -q "\"ask\""'
+check "-m with no space: asks"                'cap "git commit -m\"fix the footer\"" | grep -q "\"ask\""'
+CMDQ="git commit -m 'it'\"'\"'s fixed now'"
+check "a shell-joined quote: asks"            'cap "$CMDQ" | grep -q "\"ask\""'
+check "--amend: silent, it was asked already" '[ -z "$(cap "git commit --amend -m \"fix the footer\"")" ]'
 check "a typo fix: silent"                    '[ -z "$(cap "git commit -m \"fix typo in footer\"")" ]'
 check "fix in a branch name after the commit: silent" '[ -z "$(cap "git commit -m \"add the footer\" && git push origin fix/footer")" ]'
 check "fix in a path before the commit: silent" '[ -z "$(cap "git add fix.js && git commit -m \"add the footer\"")" ]'
@@ -377,6 +381,10 @@ echo again > cap.txt; git add cap.txt
 check "commit-msg: a fix with no lesson warns on stderr" 'gitcap "fix the footer" | grep -q "capture asks"'
 check "commit-msg: ordinary message is silent" '[ -z "$(gitcap "add the footer")" ]'
 check "commit-msg: comment lines are not the message" '[ -z "$(gitcap "# fix nothing, this is a comment")" ]'
+check "commit-msg: a merge is not asked"      '[ -z "$(gitcap "Merge branch '"'"'fix/footer'"'"' into main")" ]'
+check "commit-msg: -v diff below the scissors is not the message" '[ -z "$(gitcap "add the footer
+# ------------------------ >8 ------------------------
++// a bug lives here")" ]'
 check "pre-commit runner has no message: silent" '[ -z "$(NA_DRY_RUN=1 bash .claude/hooks/na/pre-commit 2>&1)" ]'
 gitcap "fix the footer" "" >/dev/null
 check "a live git fire is logged as capture"  '[ "$(col 2)" = capture ] && [ "$(col 4)" = git ] && [ "$(col 5)" = proceeded ]'
@@ -412,6 +420,8 @@ PY
 check "no key: warn is the default"           'cap "git commit -m \"fix the footer\"" | grep -q "\"ask\""'
 ERR="$(git commit -qm "fix the footer" 2>&1)"; RC=$?
 check "warn: a real git commit goes through, with the question" '[ $RC -eq 0 ] && echo "$ERR" | grep -q "capture asks"'
+ERR="$(git commit --amend --no-edit 2>&1)"; RC=$?
+check "amend from git: not asked again"       '[ $RC -eq 0 ] && ! echo "$ERR" | grep -q "capture asks"'
 rm -f "$CMSG"; : > "$LOG"
 
 echo

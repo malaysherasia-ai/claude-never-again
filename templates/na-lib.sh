@@ -264,13 +264,13 @@ na_pending() {
 na_fire() {
   local reason="$1" mode decision label
   mode="${NA_MODE:-$(na_mode)}"
+  # A hook that asks a question rather than guarding the tree sets NA_LABEL
+  # (the capture check says "asks"); the library knows no hook by name.
   case "$mode" in
-    warn)  decision="ask";  label="would block" ;;
+    warn)  decision="ask";  label="${NA_LABEL:-would block}" ;;
     block) decision="deny"; label="blocked" ;;
     *)     exit 0 ;;   # retired or unknown: silent
   esac
-  # The capture check is a question, not a rule about the tree.
-  [ "$NA_ID" = "capture" ] && [ "$mode" = "warn" ] && label="asks"
 
   if [ "$NA_SOURCE" = "git" ]; then
     # The git runner is the second look at a commit Claude Code already asked

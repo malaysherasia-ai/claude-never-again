@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "nextId": 4,
+  "nextId": 5,
   "cap": 40,
   "loadedWarn": 60,
   "tokensPerPreventedRepeat": 8000,
@@ -30,6 +30,13 @@
       "filed": "2026-09-21",
       "file": "LESSONS.md",
       "rule": "Evidence that something happened must be a file that changes for that reason only"
+    },
+    "L004": {
+      "scope": "hooks",
+      "form": "rule",
+      "filed": "2026-09-22",
+      "file": "LESSONS.md",
+      "rule": "Walk a commit-time check through merge, amend, -v, no -m, commentChar and the first commit before it ships"
     }
   }
 }
