@@ -92,7 +92,12 @@ while IFS=$'\t' read -r id mode trigger watch; do
   script="$HOOKS_DIR/$id.sh"
   [ -f "$script" ] || continue
   if [ "$NA_SOURCE" = "git" ]; then
-    bash "$script" </dev/null || RC=1
+    # A warn under git prints its reason and exits 0, so the exit code alone
+    # said "clean" for every warn fire: the first real catch in the field
+    # was logged as a clean commit. What the hook said is the verdict, as
+    # it is under Claude Code; the exit code only decides block.
+    err="$(bash "$script" </dev/null 2>&1)" || RC=1
+    [ -n "$err" ] && { printf '%s\n' "$err" >&2; OUTS="$OUTS$err"$'\n'; }
   else
     out="$(bash "$script" </dev/null)"
     [ -n "$out" ] && OUTS="$OUTS$out"$'\n'

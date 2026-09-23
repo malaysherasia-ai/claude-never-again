@@ -14,3 +14,4 @@ The reasoning behind any rule lives in `.claude/never-again/archive/L###.md`.
 - [tests] grep -c exits 1 on zero matches, so never chain `|| echo 0` after it; test the file, then `|| true` the grep — when: writing a test helper (L002)
 - [hooks] Evidence that something happened must be a file that changes for that reason only, never a shared index — when: writing a check that looks for a side effect (L003)
 - [hooks] Before a commit-time check ships, walk it through merge, amend, -v, no -m, a custom commentChar and the first commit, and test each — when: writing a pre-commit or commit-msg check (L004)
+- [hooks] A hook's exit code only says whether to stop the command; a runner that records what hooks did reads what they printed, on every runner alike — when: writing a runner or a log line about a hook's result (L005)

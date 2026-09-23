@@ -2,6 +2,38 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.7.0] — 2026-09-23
+
+From the sixth field run, a client site built with Antigravity, and the
+first real catch: a warn-mode hook found staging URLs in a homepage schema
+at commit time. Three things around that catch were wrong. The agent's
+own write-up said the hook had "blocked" a commit that had landed and
+named itself as a caller when every call had come from git. The catch
+was logged as a clean commit in `calls.log`. And eight older copies of
+the same mistake stayed in the tree, because a hook only ever looks at
+what a commit changes.
+
+### Added
+
+- **`na report`**: the stats as a Markdown page, counted from `state.json`,
+  `LESSONS.md`, `fires.log` and `calls.log`. Every lesson with its record,
+  every hook's fires and grades, who called the hook and how often, which
+  registered agents never did, and what each column means. Hand this over
+  instead of a summary written from memory. The skill now says so.
+- **`na sweep L017`**: run one hook's check over every tracked file, once,
+  and print the hits; nothing is recorded and no fire is logged. A verify
+  hook's sweep runs its command by hand. `NA_ALL=1 bash L017.sh` does the
+  same without the CLI. The skill asks for a sweep right after a hook is
+  written; the hook template says why.
+
+### Fixed
+
+- A warn fire under git was written to `calls.log` as `clean`. The
+  dispatcher took the hook's exit code as the verdict, and a warn under git
+  exits 0 so the commit can go ahead. It now takes what the hook printed as
+  the verdict, the same test the Claude Code branch uses. `fires.log` and
+  `na` were right all along; only the call line was wrong.
+
 ## [1.6.0] — 2026-09-21
 
 From the fifth field run, on a site built with Antigravity: four real

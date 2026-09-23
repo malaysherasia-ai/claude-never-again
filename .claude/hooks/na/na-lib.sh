@@ -140,6 +140,17 @@ na_begin() {
     exit 0
   fi
 
+  # A sweep (`na sweep L017`, or NA_ALL=1 by hand): the check runs over every
+  # file in the tree instead of a commit's files, prints what it finds, and
+  # records nothing. A hook only ever looks at what a commit changes, so
+  # whatever was in the tree before the hook existed stays there until it
+  # is swept once.
+  if [ -n "${NA_ALL:-}" ]; then
+    NA_SOURCE="manual"; NA_DRY_RUN=1; export NA_DRY_RUN
+    NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""
+    return 0
+  fi
+
   # Under the dispatcher the payload was parsed once and exported; there is
   # no stdin to read and nothing to decide.
   if [ -n "${NA_DISPATCHED:-}" ]; then
@@ -186,10 +197,13 @@ na_is_chain() {
 # na_changed_files [ext ...] — the files a commit could carry, one per line.
 # From git: what is staged. From Claude Code: everything different from HEAD,
 # staged or not, because `git add -A && git commit` is one tool call and at
-# PreToolUse time nothing is staged yet. Never the whole tree.
+# PreToolUse time nothing is staged yet. Never the whole tree, except under
+# a sweep (NA_ALL), which is the one time the whole tree is the question.
 na_changed_files() {
   local list
-  if [ -n "${NA_CHANGED_ALL+x}" ]; then
+  if [ -n "${NA_ALL:-}" ]; then
+    list="$(git -C "$NA_ROOT" ls-files -co --exclude-standard 2>/dev/null)"
+  elif [ -n "${NA_CHANGED_ALL+x}" ]; then
     list="$NA_CHANGED_ALL"              # the dispatcher listed them once
   elif [ "$NA_SOURCE" = "git" ]; then
     list="$(git -C "$NA_ROOT" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)"
@@ -271,6 +285,13 @@ na_fire() {
     block) decision="deny"; label="blocked" ;;
     *)     exit 0 ;;   # retired or unknown: silent
   esac
+
+  # A sweep: say what is in the tree and exit 1, so a script can tell. Nothing
+  # is recorded; a sweep is not a fire.
+  if [ "$NA_SOURCE" = "manual" ]; then
+    echo "never-again $NA_ID in the tree: $reason" >&2
+    exit 1
+  fi
 
   if [ "$NA_SOURCE" = "git" ]; then
     # The git runner is the second look at a commit Claude Code already asked

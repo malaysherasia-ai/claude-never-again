@@ -10,7 +10,10 @@
 #
 # Rules for the CHECK section:
 #   * Look at na_changed_files, not the whole tree. A commit-time hook that
-#     scans every file in the repo is slow on every commit forever.
+#     scans every file in the repo is slow on every commit forever. Because
+#     of that, whatever is already in the tree stays unguarded until the
+#     hook is swept over it once: `na sweep L017` runs this same check over
+#     every tracked file and prints the hits (or NA_ALL=1 bash L017.sh).
 #   * Keep it under a second. A hook people wait on is a hook people remove.
 #   * If satisfying the rule means something must have RUN (a test, a boot,
 #     a build), run it here when it is stale. Do not test a stamp that another

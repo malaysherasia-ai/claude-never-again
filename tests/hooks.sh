@@ -272,6 +272,9 @@ ERR="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"; RC=$?
 check "runner warns on stderr"            'echo "$ERR" | grep -q "L001 would block"'
 check "warn mode lets git proceed"        '[ $RC -eq 0 ]'
 check "git fire logged as proceeded"      '[ "$(col 4)" = git ] && [ "$(col 5)" = proceeded ]'
+# A warn under git exits 0, and the dispatcher once took that as "clean": the
+# first real catch in the field was a "clean" line in calls.log.
+check "git warn fire is a fired call in calls.log" '[ "$(awk -F"\t" "END{print \$4}" .claude/never-again/calls.log)" = fired ]'
 echo "--- promotion rights"
 git remote add origin https://example.invalid/repo.git 2>/dev/null
 "$PYBIN" - <<'PY'
@@ -326,6 +329,29 @@ ERR="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"
 check "git runner stays quiet after Claude asked" '[ -z "$ERR" ]'
 check "and records that the person proceeded"  '[ "$(logn)" -eq 1 ] && [ "$(col 5)" = proceeded ]'
 git commit -qm x 2>/dev/null
+
+echo
+echo "=== a sweep asks the check about the whole tree ==="
+# c.txt carries the marker and is committed: no commit will ever ask about it
+# again, so only a sweep can find it. A sweep records nothing.
+N0="$(logn)"
+OUTS="$("$PYBIN" $NA sweep L001 2>&1)"; RC=$?
+check "sweep finds the committed copy"     '[ $RC -ne 0 ] && echo "$OUTS" | grep -q "L001 in the tree" && echo "$OUTS" | grep -q "c.txt"'
+check "sweep is not a fire"                '[ "$(logn)" -eq "$N0" ]'
+check "NA_ALL by hand does the same"       'NA_ALL=1 bash "$HOOK" 2>&1 </dev/null | grep -q "L001 in the tree.*c.txt"'
+check "sweep refuses a rule line"          '! "$PYBIN" $NA sweep L999 >/dev/null 2>&1'
+echo clean > b.txt; echo clean > c.txt; git add b.txt c.txt; git commit -qm x 2>/dev/null
+check "clean tree: sweep says so, exit 0"  '"$PYBIN" $NA sweep L001 2>&1 | grep -q "nothing in the tree"'
+
+echo
+echo "=== the report is counted from the same files ==="
+"$PYBIN" $NA report > report.md 2>&1; RC=$?
+check "report renders"                     '[ $RC -eq 0 ] && grep -q "^# never-again report" report.md'
+check "report counts the fires it can see" 'grep -q "| Hook fires | $(logn) |" report.md'
+check "report lists the hook with its rule" 'grep -q "^| L001 | warn |" report.md'
+check "report says who called"             'grep -q "git pre-commit |" report.md'
+check "report names the honest column"     'grep -q "Warned past" report.md'
+rm -f report.md
 
 echo
 echo "=== a fix committed with no lesson is asked about ==="
@@ -562,6 +588,10 @@ check "misconfigured under git: stderr, exit 0" '[ $RC -eq 0 ] && echo "$ERR" | 
 setcfg del
 check "unconfigured: visible systemMessage"   'firev | grep -q "systemMessage.*no verify block"'
 setcfg '{"run": "sh check.sh", "watch": ".txt", "skip": "scripts"}'
+echo BROKEN > sweep.txt
+OUTS="$("$PYBIN" $NA sweep L002 2>&1)"; RC=$?
+check "sweep of a verify hook runs its command"  '[ $RC -ne 0 ] && echo "$OUTS" | grep -q "check failed"'
+rm -f sweep.txt
 "$PYBIN" - <<'PY'
 import json, io
 p = '.claude/never-again/state.json'
@@ -784,6 +814,9 @@ pay codex "git commit -m x" | bash .claude/hooks/na/_after.sh --agent codex
 check "after the commit: proceeded"        '[ "$(col 5)" = proceeded ]'
 git add ag.txt; bash .claude/hooks/na/pre-commit >/dev/null 2>&1; git reset -q ag.txt
 check "git side logs no agent"             '[ "$(ccol 2)" = - ] && [ "$(ccol 3)" = git ]'
+check "a warned git commit is a fired call" '[ "$(ccol 4)" = fired ]'
+echo fine > ag.txt; git add ag.txt; bash .claude/hooks/na/pre-commit >/dev/null 2>&1; git reset -q ag.txt
+check "a quiet git commit is a clean call"  '[ "$(ccol 4)" = clean ]'
 rm -f ag.txt
 
 echo
