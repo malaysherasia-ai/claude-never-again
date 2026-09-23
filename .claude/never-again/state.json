@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "nextId": 5,
+  "nextId": 6,
   "cap": 40,
   "loadedWarn": 60,
   "tokensPerPreventedRepeat": 8000,
@@ -37,6 +37,13 @@
       "filed": "2026-09-22",
       "file": "LESSONS.md",
       "rule": "Walk a commit-time check through merge, amend, -v, no -m, commentChar and the first commit before it ships"
+    },
+    "L005": {
+      "scope": "hooks",
+      "form": "rule",
+      "filed": "2026-09-23",
+      "file": "LESSONS.md",
+      "rule": "A hook's exit code only says whether to stop the command; a runner that records what hooks did reads what they printed"
     }
   }
 }

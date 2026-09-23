@@ -243,7 +243,11 @@ worked example is in [`examples/browser-boot/`](examples/browser-boot/).
 
 The block below is **sample output from a mature install**, not results from
 this project. It shows the shape of the report. To see what your own repo has
-recorded, run `na` there.
+recorded, run `na` there. `na report` prints the same numbers as a Markdown
+page, with every lesson, every hook's record and which agents ever called
+the hook, so a write-up for someone else can be counted rather than written:
+the first field report an agent produced about this tool said hooks were
+"preventing regressions" in a repo whose fire log did not exist.
 
 ```
 $ na
@@ -395,7 +399,9 @@ time the stamp is written in the same command as the commit. Six of the first
 nine real fires were exactly that. If a rule says "X must have run", the hook
 runs X itself when things are stale, and fires only when X fails.
 
-It also looks only at the files that changed, not the whole tree. It records
+It also looks only at the files that changed, not the whole tree, so what
+was already in the tree when a hook was written stays there until `na sweep
+L001` runs the same check over every file once. It records
 what happened after it fired. And it stays out of `fires.log` during
 self-tests (`NA_DRY_RUN=1`).
 
@@ -553,6 +559,8 @@ does not claim:
 
 ```bash
 na --version      # which release is installed
+na report         # the stats as a Markdown page, counted from the logs
+na sweep L001     # run one hook's check over the whole tree, once
 na sort           # most-fired rules first, in every LESSONS.md
 na why L001       # read the full story behind a rule
 na retire L001    # drop the line, unregister the hook, keep the archive

@@ -9,3 +9,6 @@ CLAUDE.md.bak
 AGENTS.md.bak
 GEMINI.md.bak
 .github/copilot-instructions.md.bak
+
+# python leaves these behind when na is imported by a test
+__pycache__/

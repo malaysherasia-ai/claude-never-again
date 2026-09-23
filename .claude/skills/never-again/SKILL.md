@@ -116,6 +116,11 @@ tool. Warn mode is also how the lesson proves itself.
      counts toward promotion. A verify-shaped hook still runs its command
      under `NA_DRY_RUN`, because nothing else can decide, but records nothing;
      self-test it with a fast command first, then set the real one.
+   - **Then sweep the tree once: `na sweep L017`.** A hook checks the files
+     a commit carries, so every older copy of the same mistake stays in
+     the tree unless the check is asked about it now. The first real catch
+     in the field found one file and left eight others. Fix what the sweep
+     names, or tell the person what it found and why it stays.
 
 3. Nothing to register. One dispatcher entry in `.claude/settings.json`
    (installed once) runs every hook listed in `state.json`, so filing a hook
@@ -316,6 +321,11 @@ replacing it.
   never a reason to.
 - Do not generate statistics yourself. Run `.claude/never-again/na`; a script
   counting lines costs nothing, and you reasoning about counts costs a lot.
+  When someone wants a write-up of how the tool is doing, run
+  `.claude/never-again/na report` and hand over its output. Do not write
+  the report yourself: one such summary said hooks were "preventing
+  regressions" in a repo whose fire log did not exist, and named an agent
+  as a caller that had never called.
 - Do not rewrite `CLAUDE.md` outside the marked block.
 
 ## Files this skill owns
