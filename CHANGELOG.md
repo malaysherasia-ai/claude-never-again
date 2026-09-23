@@ -2,6 +2,33 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.8.0] — 2026-09-23
+
+An Antigravity session ran on a repo that was a release behind and never
+noticed. The release nudge had been delivered twice: as a hook answer the
+IDE never asks for, and as one line on the stderr of a `git commit` that
+succeeded, in a terminal nobody reads. Both are reminders. The agent's own
+proposal was a third reminder, a rule in `AGENTS.md` to read the logs; the
+same file already tells it to file lessons, and it files them when
+prompted. The fix is the one this tool is built on: a notice an agent must
+act on is a stopped command. Filed here as L006.
+
+### Added
+
+- **`"updates": "block"`** in `state.json`: when the once-a-day check has
+  found a newer release, the next commit is refused, from every agent's
+  hook and from git's own pre-commit, with the one command that clears it.
+  A stopped commit is a fired call in `calls.log`; the nudge never was.
+- **`na upgrade --later`**: now is not the time. Commits go ahead until
+  tomorrow or until a newer release than the deferred one appears; then the
+  stop is back. Retrying the commit unchanged does not get past it.
+- **Antigravity repos get `"block"` at install.** The IDE has never been
+  seen calling the hook, so the git side is the only channel, and the line
+  there is invisible. Set once, when the agent joins the repo; a value the
+  person changes afterwards stands. `na` says which mode is on and whether
+  a deferral is running. The skill says what to do when a commit is
+  stopped for this reason.
+
 ## [1.7.0] — 2026-09-23
 
 From the sixth field run, a client site built with Antigravity, and the

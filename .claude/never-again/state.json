@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "nextId": 6,
+  "nextId": 7,
   "cap": 40,
   "loadedWarn": 60,
   "tokensPerPreventedRepeat": 8000,
@@ -44,6 +44,13 @@
       "filed": "2026-09-23",
       "file": "LESSONS.md",
       "rule": "A hook's exit code only says whether to stop the command; a runner that records what hooks did reads what they printed"
+    },
+    "L006": {
+      "scope": "hooks",
+      "form": "rule",
+      "filed": "2026-09-23",
+      "file": "LESSONS.md",
+      "rule": "A notice the agent must act on stops the command; a line printed by a command that succeeded is a reminder and gets skipped"
     }
   }
 }

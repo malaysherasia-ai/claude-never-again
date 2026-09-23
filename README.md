@@ -44,6 +44,15 @@ upgrade*. Nothing is installed for you. Offline, it stays quiet and asks
 again the next day. A repo that only commits from a terminal sees the line
 when someone runs `na`. Turn it off with `"updates": "off"` in `state.json`.
 
+That line is a reminder, and an agent that runs git in a terminal nobody
+reads commits straight past it; one did. `"updates": "block"` makes the
+stale release a stop instead: the next commit is refused, from any agent or
+a shell, with the one command that clears it, `na upgrade`. When now is not
+the time, `na upgrade --later` lets commits through until tomorrow or the
+next release. A repo that registers Antigravity gets `"block"` at install,
+because that IDE has never been seen running the hook and only the git side
+can reach it; change it in `state.json` and the installer leaves it alone.
+
 **Run the installer yourself, from a terminal.** Claude Code's auto mode will
 not run an installer it has never seen. It also will not edit its own
 `.claude/settings.json` or write into `.git/hooks/`, even when you say yes.

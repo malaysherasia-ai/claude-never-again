@@ -15,3 +15,4 @@ The reasoning behind any rule lives in `.claude/never-again/archive/L###.md`.
 - [hooks] Evidence that something happened must be a file that changes for that reason only, never a shared index — when: writing a check that looks for a side effect (L003)
 - [hooks] Before a commit-time check ships, walk it through merge, amend, -v, no -m, a custom commentChar and the first commit, and test each — when: writing a pre-commit or commit-msg check (L004)
 - [hooks] A hook's exit code only says whether to stop the command; a runner that records what hooks did reads what they printed, on every runner alike — when: writing a runner or a log line about a hook's result (L005)
+- [hooks] A notice the agent must act on stops the command; a line printed by a command that succeeded is a reminder and gets skipped — when: telling an agent something from a hook (L006)

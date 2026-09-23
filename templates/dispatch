@@ -112,6 +112,34 @@ if [ "$IS_COMMIT" -eq 1 ] && [ "$NA_SOURCE" != "git" ] && [ -f "$HOOKS_DIR/_capt
   [ -n "$out" ] && OUTS="$OUTS$out"$'\n'
 fi
 
+# A newer release, from the cache the after-commit hook keeps. No network
+# here. Under "updates": "check" it is one line on a commit that goes ahead;
+# under "block" the commit is refused until `na upgrade` moves the repo or
+# `na upgrade --later` defers it for a day. The line was the first design,
+# and an agent committed straight past it: a command that succeeded is not
+# read, a refused one is. The nudge stays out of the calls.log verdict; the
+# stop is a fired call, since it stopped the commit.
+UPNOTE=""
+if [ "$IS_COMMIT" -eq 1 ]; then
+  NEWER="$("$NA_PY" "$NA_CLI" _check-update --cached --how 2>/dev/null)"; NEWER="${NEWER//$'\r'/}"
+  HOW="${NEWER#* }"; NEWER="${NEWER%% *}"
+  if [ -n "$NEWER" ]; then
+    HAVE="$("$NA_PY" "$NA_CLI" --version | sed 's/.* //')"
+    if [ "$HOW" = "stop" ]; then
+      STOPMSG="never-again $NEWER is out (this repo has $HAVE). This commit is stopped until the repo moves: run .claude/never-again/na upgrade, then commit again. Not now: .claude/never-again/na upgrade --later lets commits through until tomorrow or the next release."
+      if [ "$NA_SOURCE" = "git" ]; then
+        echo "$STOPMSG" >&2; RC=1
+      else
+        OUTS="$OUTS$("$NA_PY" -c 'import json,sys; print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": sys.argv[1]}}))' "$STOPMSG")"$'\n'
+      fi
+    elif [ "$NA_SOURCE" = "git" ]; then
+      echo "never-again $NEWER is out (this repo has $HAVE): .claude/never-again/na upgrade" >&2
+    else
+      UPNOTE='{"systemMessage":"never-again '"$NEWER"' is out: run .claude/never-again/na upgrade when convenient"}'$'\n'
+    fi
+  fi
+fi
+
 # One line per commit this dispatcher saw, whoever called it. Answers the
 # question a field run could not: did the agent call the hook at all?
 if [ "$IS_COMMIT" -eq 1 ] && [ -z "${NA_DRY_RUN:-}" ]; then
@@ -121,18 +149,7 @@ if [ "$IS_COMMIT" -eq 1 ] && [ -z "${NA_DRY_RUN:-}" ]; then
   printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$who" "$NA_SOURCE" "$verdict" \
     >> "$NA_ROOT/.claude/never-again/calls.log" 2>/dev/null || true
 fi
-
-# A newer release, from the cache the after-commit hook keeps. No network here.
-if [ "$IS_COMMIT" -eq 1 ]; then
-  NEWER="$("$NA_PY" "$NA_CLI" _check-update --cached 2>/dev/null)"; NEWER="${NEWER//$'\r'/}"
-  if [ -n "$NEWER" ]; then
-    if [ "$NA_SOURCE" = "git" ]; then
-      echo "never-again $NEWER is out (this repo has $("$NA_PY" "$NA_CLI" --version | sed 's/.* //')): .claude/never-again/na upgrade" >&2
-    else
-      OUTS="$OUTS"'{"systemMessage":"never-again '"$NEWER"' is out: run .claude/never-again/na upgrade when convenient"}'$'\n'
-    fi
-  fi
-fi
+OUTS="$OUTS$UPNOTE"
 
 [ "$NA_SOURCE" = "git" ] && exit "$RC"
 [ -z "$OUTS" ] && exit 0
