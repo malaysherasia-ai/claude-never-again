@@ -17,3 +17,4 @@ The reasoning behind any rule lives in `.claude/never-again/archive/L###.md`.
 - [hooks] A hook's exit code only says whether to stop the command; a runner that records what hooks did reads what they printed, on every runner alike — when: writing a runner or a log line about a hook's result (L005)
 - [hooks] A notice the agent must act on stops the command; a line printed by a command that succeeded is a reminder and gets skipped — when: telling an agent something from a hook (L006)
 - [python] [hook] A subprocess read as text passes encoding="utf-8", errors="replace" on the same line as text=True; Windows decodes with cp1252 otherwise — when: calling subprocess.run in text mode (L007)
+- [logs] A "since the last commit" window is anchored to HEAD (record the HEAD each line was written under), never to timestamps; two events in one second cannot be ordered by the clock — when: selecting log lines relative to a commit (L008)

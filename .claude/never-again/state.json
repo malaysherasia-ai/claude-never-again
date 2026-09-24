@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "nextId": 8,
+  "nextId": 9,
   "cap": 40,
   "loadedWarn": 60,
   "tokensPerPreventedRepeat": 8000,
@@ -59,6 +59,13 @@
       "filed": "2026-09-24",
       "file": "LESSONS.md",
       "rule": "A subprocess read as text passes encoding=utf-8, errors=replace on the same line as text=True; Windows decodes with cp1252 otherwise"
+    },
+    "L008": {
+      "scope": "logs",
+      "form": "rule",
+      "filed": "2026-09-24",
+      "file": "LESSONS.md",
+      "rule": "A \"since the last commit\" window is anchored to HEAD (record the HEAD each line was written under), never to timestamps; two events in one second cannot be ordered by the clock"
     }
   }
 }

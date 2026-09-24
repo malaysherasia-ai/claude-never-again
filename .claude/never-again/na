@@ -430,7 +430,7 @@ def stats():
         went = sum(1 for r in nudges if r["outcome"] == "proceeded")
         print(f"  capture nudges  {len(nudges)}  (a fix committed with no lesson filed:"
               f" {stopped} stopped, {went} went ahead)")
-        fixed = fixed_failures(read_failures(), _last_commit_ts())
+        fixed = fixed_failures(read_failures(), _head())
         if fixed:
             print(f"  fixed, unfiled  {len(fixed)}  (failed under the agent, passed after a change, no commit yet: na failures)")
 
@@ -766,7 +766,7 @@ def cmd_capture(argv):
     print(mode)
     print(" ".join(msg.split()) if msg and looks_like_fix(msg) else "")
     # Third line: what the record says, whatever the message says.
-    print(_fixed_evidence(fixed_failures(read_failures(), _last_commit_ts())))
+    print(_fixed_evidence(fixed_failures(read_failures(), _head())))
     return 0
 
 
@@ -784,7 +784,11 @@ def cmd_capture(argv):
 # the question then carries the error instead of the message.
 FAILURES = os.path.join(BASE, "failures.log")
 FAILURES_OPEN = os.path.join(BASE, ".failures-open")   # exists while a failure has no pass yet
-FAIL_COLS = ("ts", "kind", "key", "tree", "ref", "cmd", "err")
+# The last column is the HEAD the line was written under: "since the last
+# commit" is a question about HEAD, not the clock. A CI runner wrote a
+# failure in the same second as the commit before it, and a window drawn
+# by timestamp put it on the wrong side.
+FAIL_COLS = ("ts", "kind", "key", "tree", "ref", "cmd", "err", "head")
 FAIL_KEEP = 300
 # Commands whose non-zero exit is an answer, not a failure: grep found
 # nothing, test -f said no, git diff --quiet said "yes, it differs". Nothing
@@ -859,31 +863,30 @@ def _append_failure(row):
             fh.write("\t".join(_fail_cell(r.get(c)) for c in FAIL_COLS) + "\n")
 
 
-def _last_commit_ts():
-    try:
-        return int(_git("log", "-1", "--format=%ct"))
-    except (TypeError, ValueError):
-        return 0
+def _head():
+    return _git("rev-parse", "--verify", "-q", "HEAD") or "initial"   # unborn branch: "initial"
 
 
-def _since(rows, since):
-    return [r for r in rows if parse_ts(r["ts"]) > since]
+def _under_head(rows, head):
+    """The lines written under HEAD as it is now: everything since the last
+    commit, whatever the clock said."""
+    return [r for r in rows if r.get("head") == head]
 
 
-def open_failures(rows, since):
+def open_failures(rows, head):
     """The last line per command since the last commit, kept when it is a
     failure nothing has passed after."""
     last = {}
-    for r in _since(rows, since):
+    for r in _under_head(rows, head):
         last[r["key"]] = r
     return {k: r for k, r in last.items() if r["kind"] == "fail"}
 
 
-def fixed_failures(rows, since):
+def fixed_failures(rows, head):
     """(failed, passed) pairs since the last commit where the tree changed
     between the two: a fix, whatever the commit message says."""
     pend, out = {}, []
-    for r in _since(rows, since):
+    for r in _under_head(rows, head):
         if r["kind"] == "fail":
             pend[r["key"]] = r
         elif r["kind"] == "fixed" and r["key"] in pend:
@@ -906,7 +909,7 @@ def cmd_failed(argv):
         return 0
     _append_failure({"ts": now_ts(), "kind": "fail", "key": _fail_key(cmd), "tree": tree_fingerprint(),
                      "ref": _argval(argv, "--tool-use-id") or "-", "cmd": cmd[:160],
-                     "err": _first_error_line(_argval(argv, "--error"))})
+                     "err": _first_error_line(_argval(argv, "--error")), "head": _head()})
     with open(FAILURES_OPEN, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(now_ts() + "\n")
     return 0
@@ -921,14 +924,15 @@ def cmd_passed(argv):
     open mark once nothing is open, so ordinary calls cost nothing again."""
     cmd = _argval(argv, "--cmd")
     rows = read_failures()
-    since = _last_commit_ts()
-    opened = open_failures(rows, since)
+    head = _head()
+    opened = open_failures(rows, head)
     hit = opened.pop(_fail_key(cmd), None) if cmd else None
     if hit:
         tree = tree_fingerprint()
         kind = "fixed" if tree != hit["tree"] else "flaky"
         _append_failure({"ts": now_ts(), "kind": kind, "key": hit["key"], "tree": tree,
-                         "ref": _argval(argv, "--tool-use-id") or "-", "cmd": hit["cmd"], "err": hit["err"]})
+                         "ref": _argval(argv, "--tool-use-id") or "-", "cmd": hit["cmd"], "err": hit["err"],
+                         "head": head})
         if kind == "fixed":
             print("never-again: `%s` failed at %s UTC (%s) and passes now that the tree changed. "
                   "If a bug was fixed, capture it with the never-again skill; otherwise the commit "
@@ -955,10 +959,10 @@ def failures_cmd(argv):
     """`na failures`: the record since the last commit, for the skill to
     file from and the person to read."""
     rows = read_failures()
-    since = _last_commit_ts()
-    fixed = fixed_failures(rows, since)
-    opened = open_failures(rows, since)
-    flaky = [r for r in _since(rows, since) if r["kind"] == "flaky"]
+    head = _head()
+    fixed = fixed_failures(rows, head)
+    opened = open_failures(rows, head)
+    flaky = [r for r in _under_head(rows, head) if r["kind"] == "flaky"]
     print()
     print("  failed under the agent since the last commit  (from failures.log; Claude Code reports these)")
     print("  " + "-" * 70)
@@ -1431,7 +1435,7 @@ def review():
         for lid, c in sorted(noisy.items()):
             print(f"    {lid}  {c:>3} wrong   {(text.get(lid) or '')[:60]}")
 
-    fixed = fixed_failures(read_failures(), _last_commit_ts())
+    fixed = fixed_failures(read_failures(), _head())
     if fixed:
         n_items += len(fixed)
         print(f"\n  fixed since the last commit  ({len(fixed)}: a command failed under the agent, the tree changed, it passed)")
