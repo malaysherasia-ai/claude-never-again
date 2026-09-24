@@ -29,10 +29,18 @@ record, and asks from it.
   message says, from every agent's hook and from git's `commit-msg`
   alike, and the question carries the command and the error instead of
   the message. A lesson in the commit or `na none` answers it as before.
-- **`na failures`**: the record since the last commit. Fixed (failed, the
-  tree changed, passed), still failing, and passed unchanged, each with
-  its error line. `na` counts the fixed-and-unfiled ones; `na review`
-  lists them, since the cheapest time to file is before the commit asks.
+- **`na failures`**: the record. Fixed (failed, the tree changed, passed),
+  still failing, and passed unchanged, each with its error line. `na`
+  counts the fixed-and-unfiled ones and `na review` lists them, since the
+  cheapest time to file is before the commit asks; once `na none` has
+  answered for the commit, neither counts them.
+
+A failure stays open across an unrelated commit, so the fix is matched
+whenever it comes; one nothing passes after is forgotten after a day.
+The line kept as the error is the first that looks like one, not a test
+runner's banner. A failure inside a chain that also commits (`npm test
+&& git commit`) is not written: a pass of that chain lands the commit in
+the same call, so there is nothing for a pair to precede.
 
 Only Claude Code has been seen sending the failure event. The other
 agents reach the record through the commit-time check, which reads the

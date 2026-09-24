@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "nextId": 9,
+  "nextId": 10,
   "cap": 40,
   "loadedWarn": 60,
   "tokensPerPreventedRepeat": 8000,
@@ -66,6 +66,13 @@
       "filed": "2026-09-24",
       "file": "LESSONS.md",
       "rule": "A \"since the last commit\" window is anchored to HEAD (record the HEAD each line was written under), never to timestamps; two events in one second cannot be ordered by the clock"
+    },
+    "L009": {
+      "scope": "hooks",
+      "form": "rule",
+      "filed": "2026-09-24",
+      "file": "LESSONS.md",
+      "rule": "A log that hooks write is appended one line at a time, never rewritten from a hook's view of it, and a decision about its state is taken from a read made after the hook's own write; tool calls end in parallel"
     }
   }
 }

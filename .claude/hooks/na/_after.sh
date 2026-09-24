@@ -37,7 +37,8 @@ FAILED=0
 case "$NA_PAYLOAD" in *PostToolUseFailure*) FAILED=1 ;; esac
 case "$NA_PAYLOAD" in
   *commit*) ;;
-  *) [ "$FAILED" -eq 1 ] || [ -f "${CLAUDE_PROJECT_DIR:-/nonexistent}/.claude/never-again/.failures-open" ] || exit 0 ;;
+  *) [ "$FAILED" -eq 1 ] || [ -f "${CLAUDE_PROJECT_DIR:-/nonexistent}/.claude/never-again/.failures-open" ] \
+       || [ -f "${CLAUDE_PROJECT_DIR//\\//}/.claude/never-again/.failures-open" ] || exit 0 ;;   # Windows hands a backslash path
 esac
 NA_PY="$(na_python)" || exit 0
 NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""; NA_CWD=""; NA_ERROR=""
@@ -58,16 +59,14 @@ if [ -n "$NA_CMD" ] && ! na_is_commit "$NA_CMD"; then
     exit 0
   fi
   [ -f "$NA_ROOT/.claude/never-again/.failures-open" ] || exit 0   # nothing open: nothing to match
-  NOTE="$("$NA_PY" "$NA_CLI" _passed --cmd "$NA_CMD" --tool-use-id "$NA_TOOL_USE_ID" 2>/dev/null)"; NOTE="${NOTE//$'\r'/}"
-  [ -n "$NOTE" ] || exit 0
-  case "${NA_AGENT:-claude}" in
-    copilot|antigravity) ;;
-    gemini) "$NA_PY" -c 'import json,sys; print(json.dumps({"systemMessage": sys.argv[1]}))' "$NOTE" ;;
-    *) "$NA_PY" -c 'import json,sys; print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": sys.argv[1]}}))' "$NOTE" ;;
-  esac
+  # The answer comes back in the caller's dialect, or not at all.
+  "$NA_PY" "$NA_CLI" _passed --cmd "$NA_CMD" --tool-use-id "$NA_TOOL_USE_ID" --agent "${NA_AGENT:-claude}" 2>/dev/null | tr -d '\r'
   exit 0
 fi
-[ -z "$NA_CMD" ] && [ "$FAILED" -eq 1 ] && exit 0   # a failed call with no command text: nothing to write
+# No command text and no commit in the payload: not a call this hook knows.
+if [ -z "$NA_CMD" ]; then
+  case "$NA_PAYLOAD" in *commit*) ;; *) exit 0 ;; esac
+fi
 
 if [ -n "$NA_TOOL_USE_ID" ]; then
   WENT="$("$NA_PY" "$NA_CLI" _proceeded --tool-use-id "$NA_TOOL_USE_ID" 2>/dev/null)"
