@@ -2,6 +2,48 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.10.0] — 2026-09-24
+
+The commit message was the only witness to a fix, and the agent writes
+the message. "update styles" can carry a bug fix, and the capture check
+read it as nothing. The tool call that failed is the better witness: it
+happened, nobody wrote it, and the same command passing once the tree
+changed is a fix by any name. This release makes the failed call the
+record, and asks from it.
+
+### Added
+
+- **The failure record.** Claude Code reports every failed tool call
+  (PostToolUseFailure). The after-tool hook writes one line to
+  `failures.log`: the command and the first line of what it said. A
+  command whose non-zero exit is an answer (`grep` found nothing, `test
+  -f` said no, `git diff --quiet`) is not a failure and is not written.
+- **A pass after a failure is a fix.** When the same command passes and
+  the tree changed in between, one line goes back to the agent while the
+  error is still in front of it, naming the command and the error. A pass
+  with the tree unchanged is a retry that worked, recorded as flaky and
+  not mentioned. The check costs nothing on an ordinary call: one file
+  test, and the file exists only while a failure is open.
+- **The capture check asks from the record.** A commit with a fixed
+  failure since the last commit and no lesson is asked whatever its
+  message says, from every agent's hook and from git's `commit-msg`
+  alike, and the question carries the command and the error instead of
+  the message. A lesson in the commit or `na none` answers it as before.
+- **`na failures`**: the record since the last commit. Fixed (failed, the
+  tree changed, passed), still failing, and passed unchanged, each with
+  its error line. `na` counts the fixed-and-unfiled ones; `na review`
+  lists them, since the cheapest time to file is before the commit asks.
+
+Only Claude Code has been seen sending the failure event. The other
+agents reach the record through the commit-time check, which reads the
+same file, so a fix an agent made under Claude Code is asked about from
+any agent's commit.
+
+### Fixed
+
+- Upgrading the `.gitignore` block when it sat at the top of the file
+  left two blank lines above the person's own entries.
+
 ## [1.9.0] — 2026-09-24
 
 A hook proves itself through fires. A rule line proves nothing on its own,

@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# never-again — runs after a git commit tool call under Claude Code, or
-# under Codex, Gemini CLI, Copilot or Antigravity with --agent NAME.
-# Registered by `na _register` on the after-tool event. Installed as
-# .claude/hooks/na/_after.sh.
+# never-again — runs after a tool call under Claude Code, or under Codex,
+# Gemini CLI, Copilot or Antigravity with --agent NAME. Registered by
+# `na _register` on the after-tool events (PostToolUse and
+# PostToolUseFailure). Installed as .claude/hooks/na/_after.sh.
 #
-# A warn-mode hook cannot see what the person chose at the prompt. This can:
-# if the tool call ran at all, the person proceeded past the warning. Any fire
-# still pending for this call is marked "proceeded". A fire that never reaches
-# here is settled as "declined" the next time anything looks at the log.
+# Three things happen here, and nothing for any other call:
+#   * a commit ran: a warn-mode hook cannot see what the person chose at the
+#     prompt, but this can. If the tool call ran at all, the person went past
+#     the warning; any fire still pending for this call is marked "proceeded".
+#     A fire that never reaches here is settled as "declined" later.
+#   * a call failed (PostToolUseFailure): one line in failures.log, the
+#     command and the first line of what it said. The failed call is the
+#     witness to a fix that no commit message can rewrite.
+#   * a call passed while a failure was open: the same command passing after
+#     the tree changed is a fix. One line in the log, one sentence back to
+#     the agent while the error is still in front of it, and the commit-time
+#     capture check asks about it whatever the message says.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/na-lib.sh"
 
@@ -22,19 +30,44 @@ done
 
 NA_PAYLOAD="$(cat)"
 # No `if` filter on the entry: leave before any interpreter starts unless
-# the payload can hold a commit at all.
-case "$NA_PAYLOAD" in *commit*) ;; *) exit 0 ;; esac
+# there is something to do. A commit, a failed call, or a call that ran
+# while a failure is open (one file test; the mark is kept by `na _passed`
+# and removed once nothing is open, so the ordinary call costs nothing).
+FAILED=0
+case "$NA_PAYLOAD" in *PostToolUseFailure*) FAILED=1 ;; esac
+case "$NA_PAYLOAD" in
+  *commit*) ;;
+  *) [ "$FAILED" -eq 1 ] || [ -f "${CLAUDE_PROJECT_DIR:-/nonexistent}/.claude/never-again/.failures-open" ] || exit 0 ;;
+esac
 NA_PY="$(na_python)" || exit 0
-NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""; NA_CWD=""
+NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""; NA_CWD=""; NA_ERROR=""
 eval "$(na_payload_vars "$NA_PAYLOAD")"
 na_root_from "$NA_CWD"
-
-# The command text decides; no entry carries a filter any more.
-[ -z "$NA_CMD" ] || na_is_commit "$NA_CMD" || exit 0
 
 NA_ROOT="$(na_native_path "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}")"
 NA_CLI="$NA_ROOT/.claude/never-again/na"
 [ -f "$NA_CLI" ] || exit 0
+
+# Not a commit: the failure record. A failed call is written down; a call
+# that passed is matched against the open failures. Only Claude Code has
+# been seen sending the failure event; the other agents reach the record
+# through the commit-time check, which reads the same file.
+if [ -n "$NA_CMD" ] && ! na_is_commit "$NA_CMD"; then
+  if [ "$FAILED" -eq 1 ]; then
+    [ -n "${NA_DRY_RUN:-}" ] || "$NA_PY" "$NA_CLI" _failed --cmd "$NA_CMD" --error "$NA_ERROR" --tool-use-id "$NA_TOOL_USE_ID" >/dev/null 2>&1
+    exit 0
+  fi
+  [ -f "$NA_ROOT/.claude/never-again/.failures-open" ] || exit 0   # nothing open: nothing to match
+  NOTE="$("$NA_PY" "$NA_CLI" _passed --cmd "$NA_CMD" --tool-use-id "$NA_TOOL_USE_ID" 2>/dev/null)"; NOTE="${NOTE//$'\r'/}"
+  [ -n "$NOTE" ] || exit 0
+  case "${NA_AGENT:-claude}" in
+    copilot|antigravity) ;;
+    gemini) "$NA_PY" -c 'import json,sys; print(json.dumps({"systemMessage": sys.argv[1]}))' "$NOTE" ;;
+    *) "$NA_PY" -c 'import json,sys; print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": sys.argv[1]}}))' "$NOTE" ;;
+  esac
+  exit 0
+fi
+[ -z "$NA_CMD" ] && [ "$FAILED" -eq 1 ] && exit 0   # a failed call with no command text: nothing to write
 
 if [ -n "$NA_TOOL_USE_ID" ]; then
   WENT="$("$NA_PY" "$NA_CLI" _proceeded --tool-use-id "$NA_TOOL_USE_ID" 2>/dev/null)"

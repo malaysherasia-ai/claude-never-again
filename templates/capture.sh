@@ -12,6 +12,10 @@
 # one moment every agent passes through. A commit whose message says it is
 # a fix, carrying no lesson, with no `na none` since the last commit, gets
 # a warning that names the skill. It does not decide what the lesson is.
+# The message is not the only witness: a command that failed under the
+# agent since the last commit and passed once the tree changed is a fix
+# whatever the message says, and the question then carries that command
+# and its error (failures.log, kept by _after.sh).
 #
 # "capture" in state.json: "warn" (the default), "block", or "off".
 set -uo pipefail
@@ -40,14 +44,19 @@ else
   OUT="$("$NA_PY" "$NA_CLI" _capture --cmd "$NA_CMD" 2>/dev/null)"
 fi
 OUT="${OUT//$'\r'/}"
-NA_MODE="${OUT%%$'\n'*}"; MSG="${OUT#*$'\n'}"
+# Three lines: mode, the message when it looks like a fix, the record.
+NA_MODE="${OUT%%$'\n'*}"; REST="${OUT#*$'\n'}"
+[ "$REST" = "$OUT" ] && REST=""
+MSG="${REST%%$'\n'*}"; EV="${REST#*$'\n'}"
+[ "$EV" = "$REST" ] && EV=""
 [ "$NA_MODE" = "off" ] && exit 0
-[ -n "$MSG" ] && [ "$MSG" != "$OUT" ] || exit 0
 
 # An amend from git keeps the message it had; that commit was asked already.
-if [ "$NA_SOURCE" = "git" ] && [ "$(git -C "$NA_ROOT" log -1 --format=%B 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/ $//')" = "$MSG" ]; then
-  exit 0
+# The record still counts: a fix folded into the previous commit is a fix.
+if [ -n "$MSG" ] && [ "$NA_SOURCE" = "git" ] && [ "$(git -C "$NA_ROOT" log -1 --format=%B 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/ $//')" = "$MSG" ]; then
+  MSG=""
 fi
+[ -n "$MSG" ] || [ -n "$EV" ] || exit 0
 
 # A lesson is being filed with it: the archive entry, the rule line or a hook
 # script. Any one of them is the answer this check wants. Not state.json: it
@@ -70,4 +79,11 @@ if [ "$NA_SOURCE" != "git" ] && [[ "$NA_CMD" =~ (^|[\;\&\|[:space:]/])na[[:space
 fi
 
 SHORT="$(printf '%s' "$MSG" | cut -c1-72)"
-na_fire "this commit looks like a fix ($SHORT) and files no lesson. Use the never-again skill to capture what went wrong, or run .claude/never-again/na none if there is nothing to learn"
+if [ -n "$MSG" ] && [ -n "$EV" ]; then
+  WHAT="this commit looks like a fix ($SHORT), the record agrees ($EV), and it files no lesson"
+elif [ -n "$MSG" ]; then
+  WHAT="this commit looks like a fix ($SHORT) and files no lesson"
+else
+  WHAT="this commit carries a fix by the record ($EV) and files no lesson"
+fi
+na_fire "$WHAT. Use the never-again skill to capture what went wrong, or run .claude/never-again/na none if there is nothing to learn"

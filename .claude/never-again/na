@@ -11,7 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
-VERSION = "1.9.0"
+VERSION = "1.10.0"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -28,6 +28,9 @@ Everything here is counted, not reasoned. It costs no tokens by design.
                   fires nobody graded, noisy hooks. Changes nothing
   na stale        lessons with no trace in the last 50 commits: no fire, no grade,
                   no mention, no archive change (--commits N for another window)
+  na failures     what failed under the agent since the last commit and passed
+                  after the tree changed: the fixes the commit will ask about,
+                  with the error each one showed (Claude Code reports them)
   na dup "text"   existing rules that say much the same as this one; run it before
                   filing a rule line (na dup L017 compares a filed rule)
   na uninstall    remove never-again from this repo (--yes to skip the prompt)
@@ -427,6 +430,9 @@ def stats():
         went = sum(1 for r in nudges if r["outcome"] == "proceeded")
         print(f"  capture nudges  {len(nudges)}  (a fix committed with no lesson filed:"
               f" {stopped} stopped, {went} went ahead)")
+        fixed = fixed_failures(read_failures(), _last_commit_ts())
+        if fixed:
+            print(f"  fixed, unfiled  {len(fixed)}  (failed under the agent, passed after a change, no commit yet: na failures)")
 
     if fr:
         print()
@@ -741,9 +747,10 @@ def looks_like_fix(msg):
 
 def cmd_capture(argv):
     """`na _capture --cmd CMD | --file PATH [--comment-char C]`: everything
-    the capture check needs in one interpreter start. Prints two lines: the
-    mode (warn, block, off) and the message when it looks like a fix, else
-    an empty line."""
+    the capture check needs in one interpreter start. Prints three lines:
+    the mode (warn, block, off), the message when it looks like a fix (else
+    empty), and the fixed failure since the last commit, if any (else
+    empty)."""
     try:
         mode = load().get("capture", "warn")
     except (OSError, ValueError):
@@ -758,6 +765,222 @@ def cmd_capture(argv):
         msg = message_file_text(argv[argv.index("--file") + 1], cc)
     print(mode)
     print(" ".join(msg.split()) if msg and looks_like_fix(msg) else "")
+    # Third line: what the record says, whatever the message says.
+    print(_fixed_evidence(fixed_failures(read_failures(), _last_commit_ts())))
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# failures: what failed under the agent, and what passed after the tree changed
+#
+# The commit message was the only witness to a fix, and the agent writes the
+# message. "update styles" can carry a bug fix, and the check read it as
+# nothing. The tool call that failed is the better witness: it happened, no
+# one wrote it, and the same command passing after the tree changed is a fix
+# by any name. Claude Code reports each failed tool call (PostToolUseFailure)
+# and each one that passed (PostToolUse); the after-tool hook writes one line
+# here for a failure, and one more when that command passes. The capture
+# check reads the pairs since the last commit as a second reason to ask, and
+# the question then carries the error instead of the message.
+FAILURES = os.path.join(BASE, "failures.log")
+FAILURES_OPEN = os.path.join(BASE, ".failures-open")   # exists while a failure has no pass yet
+FAIL_COLS = ("ts", "kind", "key", "tree", "ref", "cmd", "err")
+FAIL_KEEP = 300
+# Commands whose non-zero exit is an answer, not a failure: grep found
+# nothing, test -f said no, git diff --quiet said "yes, it differs". Nothing
+# to fix, so nothing to record. Everything else that fails is a candidate.
+FAIL_QUIET = {"grep", "rg", "egrep", "fgrep", "ls", "cat", "find", "which", "test", "[", "[[",
+              "head", "tail", "wc", "diff", "cmp", "stat", "true", "false", "type", "command",
+              "echo", "printf", "sed", "awk", "sort", "uniq", "cut", "tr", "xargs", "sleep",
+              "pwd", "cd", "exit", "return", "read", "git", "gh", "curl", "wget", "ping",
+              "ssh", "scp", "rsync", "rm", "mv", "cp", "mkdir", "touch", "chmod", "kill",
+              "pkill", "ps", "lsof", "netstat", "date", "env", "export", "source", "."}
+
+
+def _fail_key(cmd):
+    import hashlib
+    norm = " ".join(cmd.split())[:400]
+    return hashlib.sha1(norm.encode("utf-8", "replace")).hexdigest()[:10]
+
+
+def _fail_quiet(cmd):
+    """True when every segment of CMD is a command whose failure is an
+    answer, not something to fix. A chain with one real command in it
+    (cd api && npm test) is recorded."""
+    segs = re.split(r"\s*(?:&&|\|\||;|\|)\s*", " ".join(cmd.split()))
+    for seg in segs:
+        words = seg.split()
+        while words and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0])
+                         or words[0] in ("!", "sudo", "env", "exec", "time", "nohup", "(", "{")):
+            words.pop(0)
+        if not words:
+            continue
+        w = words[0].lstrip("(").rsplit("/", 1)[-1]
+        if w not in FAIL_QUIET:
+            return False
+    return True
+
+
+def _first_error_line(err):
+    for ln in (err or "").splitlines():
+        ln = ln.strip()
+        if not ln or re.match(r"^(exit code|command exited with code|exited with code)\s*\d*\.?$", ln, re.I):
+            continue
+        return ln[:160]
+    return "-"
+
+
+def _fail_cell(v):
+    v = " ".join(str(v if v is not None else "-").split())
+    return v or "-"
+
+
+def read_failures():
+    rows = []
+    if not os.path.exists(FAILURES):
+        return rows
+    with open(FAILURES, encoding="utf-8", errors="replace") as fh:
+        for ln in fh:
+            ln = ln.rstrip("\n")
+            if not ln.strip():
+                continue
+            parts = ln.split("\t")
+            rows.append(dict(zip(FAIL_COLS, parts + ["-"] * (len(FAIL_COLS) - len(parts)))))
+    return rows
+
+
+def _append_failure(row):
+    os.makedirs(BASE, exist_ok=True)
+    rows = read_failures()
+    rows.append(row)
+    rows = rows[-FAIL_KEEP:]
+    with open(FAILURES, "w", encoding="utf-8", newline="\n") as fh:
+        for r in rows:
+            fh.write("\t".join(_fail_cell(r.get(c)) for c in FAIL_COLS) + "\n")
+
+
+def _last_commit_ts():
+    try:
+        return int(_git("log", "-1", "--format=%ct"))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _since(rows, since):
+    return [r for r in rows if parse_ts(r["ts"]) > since]
+
+
+def open_failures(rows, since):
+    """The last line per command since the last commit, kept when it is a
+    failure nothing has passed after."""
+    last = {}
+    for r in _since(rows, since):
+        last[r["key"]] = r
+    return {k: r for k, r in last.items() if r["kind"] == "fail"}
+
+
+def fixed_failures(rows, since):
+    """(failed, passed) pairs since the last commit where the tree changed
+    between the two: a fix, whatever the commit message says."""
+    pend, out = {}, []
+    for r in _since(rows, since):
+        if r["kind"] == "fail":
+            pend[r["key"]] = r
+        elif r["kind"] == "fixed" and r["key"] in pend:
+            out.append((pend.pop(r["key"]), r))
+        elif r["kind"] == "flaky":
+            pend.pop(r["key"], None)
+    return out
+
+
+def _argval(argv, flag):
+    return argv[argv.index(flag) + 1] if flag in argv and argv.index(flag) + 1 < len(argv) else ""
+
+
+def cmd_failed(argv):
+    """`na _failed --cmd CMD --error TEXT [--tool-use-id ID]`: a tool call
+    failed. One line, and the open mark so the after-tool hook knows to
+    look at the next calls that pass."""
+    cmd = _argval(argv, "--cmd")
+    if not cmd or _fail_quiet(cmd):
+        return 0
+    _append_failure({"ts": now_ts(), "kind": "fail", "key": _fail_key(cmd), "tree": tree_fingerprint(),
+                     "ref": _argval(argv, "--tool-use-id") or "-", "cmd": cmd[:160],
+                     "err": _first_error_line(_argval(argv, "--error"))})
+    with open(FAILURES_OPEN, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(now_ts() + "\n")
+    return 0
+
+
+def cmd_passed(argv):
+    """`na _passed --cmd CMD`: a tool call passed while a failure was open.
+    The same command passing after the tree changed is a fix: one line,
+    and one sentence back for the agent, which has the error in front of
+    it now and will not at commit time. Passing with the tree unchanged is
+    a retry that worked (flaky), recorded and not mentioned. Clears the
+    open mark once nothing is open, so ordinary calls cost nothing again."""
+    cmd = _argval(argv, "--cmd")
+    rows = read_failures()
+    since = _last_commit_ts()
+    opened = open_failures(rows, since)
+    hit = opened.pop(_fail_key(cmd), None) if cmd else None
+    if hit:
+        tree = tree_fingerprint()
+        kind = "fixed" if tree != hit["tree"] else "flaky"
+        _append_failure({"ts": now_ts(), "kind": kind, "key": hit["key"], "tree": tree,
+                         "ref": _argval(argv, "--tool-use-id") or "-", "cmd": hit["cmd"], "err": hit["err"]})
+        if kind == "fixed":
+            print("never-again: `%s` failed at %s UTC (%s) and passes now that the tree changed. "
+                  "If a bug was fixed, capture it with the never-again skill; otherwise the commit "
+                  "will ask, and .claude/never-again/na none answers it."
+                  % (hit["cmd"][:60], hit["ts"][11:16], hit["err"][:80]))
+    if not opened:
+        try:
+            os.remove(FAILURES_OPEN)
+        except OSError:
+            pass
+    return 0
+
+
+def _fixed_evidence(fixed):
+    if not fixed:
+        return ""
+    f, _ = fixed[-1]
+    more = ", and %d more" % (len(fixed) - 1) if len(fixed) > 1 else ""
+    err = "" if f["err"] == "-" else " (%s)" % f["err"][:60]
+    return "`%s` failed%s and passed after the tree changed%s" % (f["cmd"][:48], err, more)
+
+
+def failures_cmd(argv):
+    """`na failures`: the record since the last commit, for the skill to
+    file from and the person to read."""
+    rows = read_failures()
+    since = _last_commit_ts()
+    fixed = fixed_failures(rows, since)
+    opened = open_failures(rows, since)
+    flaky = [r for r in _since(rows, since) if r["kind"] == "flaky"]
+    print()
+    print("  failed under the agent since the last commit  (from failures.log; Claude Code reports these)")
+    print("  " + "-" * 70)
+    if fixed:
+        print("\n  fixed  (%d: failed, the tree changed, passed; the commit asks for a lesson or `na none`)" % len(fixed))
+        for f, p in fixed:
+            print("    %s -> %s  %s" % (f["ts"][11:16], p["ts"][11:16], f["cmd"][:60]))
+            if f["err"] != "-":
+                print("                    %s" % f["err"][:90])
+    if opened:
+        print("\n  still failing  (%d)" % len(opened))
+        for r in sorted(opened.values(), key=lambda r: r["ts"]):
+            print("    %s           %s" % (r["ts"][11:16], r["cmd"][:60]))
+            if r["err"] != "-":
+                print("                    %s" % r["err"][:90])
+    if flaky:
+        print("\n  passed unchanged  (%d: a retry passed with no change to the tree)" % len(flaky))
+        for r in flaky:
+            print("    %s           %s" % (r["ts"][11:16], r["cmd"][:60]))
+    if not (fixed or opened or flaky):
+        print("\n  nothing since the last commit.")
+    print()
     return 0
 
 
@@ -975,6 +1198,8 @@ GITIGNORE_LINES = (".claude/never-again/fires.log",
                    ".claude/never-again/calls.log",
                    ".claude/never-again/.update-check",
                    ".claude/never-again/.capture-none",
+                   ".claude/never-again/failures.log",
+                   ".claude/never-again/.failures-open",
                    ".claude/never-again/verified/",
                    ".claude/never-again/.last-boot",
                    "CLAUDE.md.bak", "AGENTS.md.bak", "GEMINI.md.bak",
@@ -1206,6 +1431,16 @@ def review():
         for lid, c in sorted(noisy.items()):
             print(f"    {lid}  {c:>3} wrong   {(text.get(lid) or '')[:60]}")
 
+    fixed = fixed_failures(read_failures(), _last_commit_ts())
+    if fixed:
+        n_items += len(fixed)
+        print(f"\n  fixed since the last commit  ({len(fixed)}: a command failed under the agent, the tree changed, it passed)")
+        for f, _p in fixed:
+            print(f"    {f['ts'][11:16]}  {f['cmd'][:56]}")
+            if f["err"] != "-":
+                print(f"           {f['err'][:80]}")
+        print("    the commit will ask; file the lesson through the skill now, while the error is in front of you")
+
     todo = notes_todo()
     if todo:
         n_items += len(todo)
@@ -1269,8 +1504,9 @@ def cmd_gitignore(argv):
         return 0
     verb = "upgraded" if m else "written"
     if m:
+        # A block at the top of the file leaves its blank line behind.
         text = GITIGNORE_RE.sub("\n", text)
-    text = text.rstrip("\n")
+    text = text.strip("\n")
     text = (text + "\n\n" if text else "") + block
     _write_text(gi, text, nl)
     print(verb)
@@ -2532,6 +2768,8 @@ def main():
         return stale(args[1:])
     if cmd == "dup":
         return dup(args[1:])
+    if cmd == "failures":
+        return failures_cmd(args[1:])
     if cmd == "uninstall":
         return uninstall(args[1:])
     if cmd == "upgrade":
@@ -2543,6 +2781,10 @@ def main():
         return cmd_none(args[1:])
     if cmd == "_capture":
         return cmd_capture(args[1:])
+    if cmd == "_failed":
+        return cmd_failed(args[1:])
+    if cmd == "_passed":
+        return cmd_passed(args[1:])
     if cmd == "_fired":
         if len(args) < 4:
             sys.exit("usage: na _fired L### MODE SOURCE [REF]")
