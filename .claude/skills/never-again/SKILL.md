@@ -37,6 +37,16 @@ is genuinely missing.
 If the cause is still unknown, stop. A lesson without a cause becomes a
 superstition, and superstitions never expire.
 
+**Spend tokens here, not per turn.** A lesson is filed once and read on
+every turn forever, so the moment of filing is the cheap place to be
+thorough and the rule line is the expensive place to be vague. Before you
+write anything down: read the code path that failed, not just the diff
+that fixed it; name the input that made it fail; ask whether the first
+cause you found is the cause or the place the cause showed up. Then write
+the rule at the altitude that covers the next case, not this one. A
+thorough capture costs a few thousand tokens once. A shallow one costs a
+repeat.
+
 ### 2. Triage: enforceable or not?
 
 Work down this ladder and stop at the first rung that fits.
@@ -159,9 +169,12 @@ One line. No prose, no reasoning, no examples. All of that goes in
 `.claude/never-again/archive/<id>.md`, which is only ever read when someone
 asks why.
 
-Before appending, **check for a near-duplicate.** If an existing rule already
-covers it, sharpen that rule rather than adding a second one. Two overlapping
-rules are worse than one, because neither gets trusted.
+Before appending, **check for a near-duplicate**: run
+`.claude/never-again/na dup "<the rule>"`. It prints the existing rules
+that say much the same thing, or nothing. If one covers it, sharpen that
+rule in place rather than adding a second one, and say which id you
+sharpened. Two overlapping rules are worse than one, because neither gets
+trusted.
 
 If `LESSONS.md` is at its cap (default 40 rules per file, `cap` in
 `state.json`), you may not add another until one is promoted to a hook or
@@ -222,13 +235,18 @@ stop comes back.
 ## Importing notes that predate the tool
 
 Most repositories already hold lessons somewhere: a `CLAUDE.md` full of
-rules, a `NOTES.md`, a `docs/lessons.md`, an editor rules file. The person
-should not have to wait for each bug to recur before it counts. When they
-ask to import existing notes, or `na import` lists files, do this:
+rules, a `NOTES.md`, a `docs/lessons.md`, an editor's rules folder, and
+Claude Code's own memory for this project under
+`~/.claude/projects/<slug>/memory/` (what the person already told an
+agent: feedback, corrections, project facts). The person should not have
+to wait for each bug to recur before it counts, and nothing they already
+wrote down may go to waste. `na` and `na review` name these files until
+they are imported. When they are listed, or the person asks, do this:
 
 1. Run `.claude/never-again/na import`. It lists the candidate files, how
    many lines of notes each holds, and which were imported before. Only
    files marked "not imported" or "changed since import" need work.
+   Memory files are listed as `~/...`; read them at that path.
 2. Take one file at a time. Read it and split it into individual notes: one
    rule, gotcha or instruction each. Ignore prose that is not a rule (project
    description, setup steps, links).
@@ -244,9 +262,15 @@ ask to import existing notes, or `na import` lists files, do this:
 5. **Never edit or delete the source file.** It is theirs. If the notes came
    from `CLAUDE.md`, suggest, once, which lines they could now remove
    because a hook enforces them; the removal is their call.
-6. Record the file: `na import --mark <path> --filed <n>`. Then it is listed
+6. **Nothing skipped is lost.** Write
+   `.claude/never-again/archive/import-<file-slug>.md` with one line per
+   note: the note as written, and what became of it (`hook L017`,
+   `rule L018`, `sharpened L004`, or `skipped: <why>`). A skipped note
+   with its reason can be picked up by a later review; a note that was
+   silently dropped cannot.
+7. Record the file: `na import --mark <path> --filed <n>`. Then it is listed
    as imported until it changes.
-7. Report with one line per file. This is the one place a short table is
+8. Report with one line per file. This is the one place a short table is
    fine, because it is a one-off:
 
    ```
@@ -275,6 +299,14 @@ keeps itself:
 - `na ok L017` / `na wrong L017` grade the latest fire when the person wants
   to say otherwise, or to grade a proceeded one. Grades attach to real fires;
   there is nothing to grade until the hook has fired.
+- A proceeded fire counts for nothing until graded, and you are the one who
+  read the reason and made the diff. After a commit that went past a
+  warning, the after-commit hook hands the ids back in one system message:
+  *never-again: L017 warned and this commit went ahead. Grade it.* Grade it
+  then, once, from what you know: `na ok L017` when the hook was right
+  about the code even though the commit went ahead, `na wrong L017` when it
+  flagged something that was fine. Leave it ungraded when you are not sure;
+  a wrong grade is worse than none. Do not ask the person.
 
 `na` shows per hook: fires, denied, declined, proceeded, ok, wrong, and the
 current streak. After five correct in a row it says so. Offer promotion once,
@@ -294,6 +326,33 @@ branch, say so and stop; do not create the branch or the pull request
 unasked. A hook that never fires is a
 hook to retire: `na retire L017` removes the rule line, deregisters the hook,
 and moves its script to the archive so it stops costing anything.
+
+## Review: what the record says
+
+Rules decay by evidence here, not by a clock. When the person asks for a
+review, or about once a week of real work, run `.claude/never-again/na
+review`. It counts, changes nothing, and prints every proposal the record
+supports:
+
+- **stale**: lessons with no trace in the last 50 commits (no fire, no
+  grade, no mention of the id in a commit message, no archive change). A
+  hook that never fired either finished its job or misses the mistake; run
+  `na sweep` before deciding which. A rule line can never prove itself:
+  if the mistake stopped, retire it; if a script could judge it, promote
+  it to a hook.
+- **say the same thing**: pairs of rules with the same content words. Keep
+  the sharper one, fold anything the other adds into it, retire the other.
+- **not imported yet**: rules or lessons someone already wrote, in the
+  repo or in Claude Code's memory for it, that nothing counts or enforces
+  yet. Import them (see below) before filing anything new that they may
+  already cover.
+- **ready to promote**, **warned past and ungraded**, **false positives**,
+  and the cost line when a file is at cap or too many rules load per turn.
+
+Act through this skill, one item at a time. Sharpening a rule and grading a
+fire are yours to do. Retiring and promoting are the person's decision:
+propose them with the evidence, in one line each, and wait. A review that
+ends with fewer, sharper rules pays for itself on every turn afterwards.
 
 ## Monorepos and parallel agents
 

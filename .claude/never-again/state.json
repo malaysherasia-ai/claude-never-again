@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "nextId": 7,
+  "nextId": 8,
   "cap": 40,
   "loadedWarn": 60,
   "tokensPerPreventedRepeat": 8000,
@@ -51,6 +51,14 @@
       "filed": "2026-09-23",
       "file": "LESSONS.md",
       "rule": "A notice the agent must act on stops the command; a line printed by a command that succeeded is a reminder and gets skipped"
+    },
+    "L007": {
+      "scope": "python",
+      "form": "hook",
+      "mode": "warn",
+      "filed": "2026-09-24",
+      "file": "LESSONS.md",
+      "rule": "A subprocess read as text passes encoding=utf-8, errors=replace on the same line as text=True; Windows decodes with cp1252 otherwise"
     }
   }
 }

@@ -2,6 +2,54 @@
 
 All notable changes to never-again are recorded here.
 
+## [1.9.0] — 2026-09-24
+
+A hook proves itself through fires. A rule line proves nothing on its own,
+and nothing in the tool ever asked whether one was still earning its place
+on every turn. Memory tools decay by a clock; this release decays by
+evidence, and spends the agent's tokens at the moments that matter (filing,
+grading, reviewing) so the per-turn block can stay small.
+
+### Added
+
+- **`na review`**: every proposal the record supports, on one page,
+  counted and never applied. Stale lessons, rules that say the same thing,
+  hooks ready to promote, warned-past fires nobody graded, hooks graded
+  wrong twice or more, and the cost line. The skill acts on it item by
+  item; retiring and promoting stay the person's word.
+- **`na stale [--commits N]`**: lessons with no trace in the last N
+  commits (default 50): no fire, no grade, no mention of the id in a commit
+  message, no change to the archive entry. A lesson younger than the window
+  is not judged.
+- **`na dup "text"`** and **`na dup L017`**: existing rules with the same
+  content words. The skill runs it before filing a rule line and sharpens
+  the existing rule instead of adding a second.
+- **Grading handed back.** After a commit goes past a warning, the
+  after-commit hook returns one system message naming the ids; the agent
+  that read the reason and made the diff grades them once with `na ok` or
+  `na wrong`, or leaves them. A proceeded fire counted for nothing until
+  graded, and almost none were.
+- **The skill spends tokens at filing.** Read the code path that failed,
+  name the input, ask whether the first cause is the cause, write the rule
+  at the altitude of the next case. Filed once, read forever: the cheap
+  place to be thorough.
+- **Nothing already written down goes to waste.** `na import` now also
+  finds Claude Code's memory for the project (`~/.claude/projects/<slug>/
+  memory/*.md`, the feedback and facts the person already gave an agent)
+  and the rules folders of Cursor, Windsurf, Cline, Roo, Copilot, Kiro,
+  Junie and Gemini; front matter is not counted as notes. `na` and `na
+  review` name the files not yet imported until they are. The skill
+  writes an import ledger in the archive, one line per note with what
+  became of it, so a skipped note keeps its reason instead of vanishing.
+
+### Fixed
+
+- `na` read git's output through the locale's code page, cp1252 on
+  Windows, so a commit message with an em dash crashed the first `na
+  review` on this repo. Every git call now decodes UTF-8 with replacement.
+  Filed as L007, a warn hook in this repo that checks every changed Python
+  file for a text-mode subprocess call with no encoding.
+
 ## [1.8.0] — 2026-09-23
 
 An Antigravity session ran on a repo that was a release behind and never

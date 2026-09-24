@@ -626,6 +626,31 @@ check "docs/LESSONS.md is a candidate"     'echo "$OUTI" | grep -q "docs/LESSONS
 check "marked as imported"                 '"$PYBIN" $NA import | grep -q "NOTES.md .*imported"'
 "$PYBIN" $NA import --mark CLAUDE.md --filed 1 >/dev/null
 check "CLAUDE.md mark matches the listing" '"$PYBIN" $NA import | grep -q "CLAUDE.md .* imported"'
+# Rules folders of other editors, and Claude Code's memory for this project
+# (outside the repo, under a slug of the directory Claude was started in,
+# which may be a parent of the repo). Nothing already written may be lost.
+mkdir -p .github/instructions && printf 'Prefer small PRs.\n' > .github/instructions/pr.instructions.md
+FAKEHOME="$TMPDIR_ROOT/na-home"; rm -rf "$FAKEHOME"
+SLUG="$("$PYBIN" -c 'import re,sys; print(re.sub(r"[:\\/.]", "-", sys.argv[1]))' "$(dirname "$T")")"
+mkdir -p "$FAKEHOME/.claude/projects/$SLUG/memory"
+printf -- '---\nname: no-force-push\ndescription: x\n---\n\nNever force-push to main.\n' > "$FAKEHOME/.claude/projects/$SLUG/memory/no-force-push.md"
+printf -- '- [x](x.md) index only\n' > "$FAKEHOME/.claude/projects/$SLUG/memory/MEMORY.md"
+mkdir -p "$FAKEHOME/.claude/projects/other-project/memory" && printf 'Not ours.\n' > "$FAKEHOME/.claude/projects/other-project/memory/n.md"
+# A sibling whose slug merely starts with ours (app vs app-docs) is not ours.
+REPOSLUG="$("$PYBIN" -c 'import re,sys; print(re.sub(r"[:\\/.]", "-", sys.argv[1]))' "$T")"
+mkdir -p "$FAKEHOME/.claude/projects/${REPOSLUG}-docs/memory" && printf 'Sibling notes.\n' > "$FAKEHOME/.claude/projects/${REPOSLUG}-docs/memory/s.md"
+OUTM="$(HOME="$FAKEHOME" USERPROFILE="$FAKEHOME" "$PYBIN" $NA import)"
+check "an editor's rules folder is a candidate" 'echo "$OUTM" | grep -q "github/instructions/pr.instructions.md"'
+check "Claude Code memory for a parent dir is found" 'echo "$OUTM" | grep -q "~/.claude/projects/$SLUG/memory/no-force-push.md .* 1 line(s)"'
+check "front matter is not a note"         '! echo "$OUTM" | grep -q "no-force-push.md .* [2-9] line"'
+check "the memory index is not a note"     '! echo "$OUTM" | grep -q "MEMORY.md"'
+check "another project's memory is not"    '! echo "$OUTM" | grep -q "other-project"'
+check "a sibling repo's memory is not"      '! echo "$OUTM" | grep -q "Sibling\|${REPOSLUG}-docs"'
+check "na counts the files not imported"   'HOME="$FAKEHOME" USERPROFILE="$FAKEHOME" "$PYBIN" $NA | grep -q "notes  .*not imported yet"'
+check "review names them"                  'HOME="$FAKEHOME" USERPROFILE="$FAKEHOME" "$PYBIN" $NA review | grep -q "not imported yet" && HOME="$FAKEHOME" USERPROFILE="$FAKEHOME" "$PYBIN" $NA review | grep -q "no-force-push.md"'
+HOME="$FAKEHOME" USERPROFILE="$FAKEHOME" "$PYBIN" $NA import --mark "~/.claude/projects/$SLUG/memory/no-force-push.md" --filed 1 >/dev/null
+check "a memory file can be marked"        'HOME="$FAKEHOME" USERPROFILE="$FAKEHOME" "$PYBIN" $NA import | grep -q "no-force-push.md .* imported"'
+rm -rf "$FAKEHOME" .github/instructions
 bash "$SRC/install.sh" . >/dev/null 2>&1
 check "reinstall does not unmark CLAUDE.md" '"$PYBIN" $NA import | grep -q "CLAUDE.md .* imported"'
 check "source file untouched"              '[ "$(grep -c . NOTES.md)" -eq 3 ]'
@@ -916,6 +941,82 @@ import json, io
 p = '.claude/never-again/state.json'
 st = json.load(io.open(p, encoding='utf-8')); del st['lessons']['L021']
 json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+
+echo
+echo "=== review: stale by evidence, duplicates by words, grades handed back ==="
+cat >> LESSONS.md <<'EOF'
+- [tests] Never chain the boot check into the commit command; run it as its own step — when: writing a commit command (L040)
+- [tests] Run the boot check as its own step, never chained into the commit command — when: writing a commit command (L041)
+- [css] Use font: inherit on form controls so buttons match the page — when: styling forms (L042)
+EOF
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8'))
+for lid in ('L040', 'L041', 'L042'):
+    st['lessons'][lid] = {"scope": "tests", "form": "rule", "filed": "2020-01-01", "file": "LESSONS.md"}
+st['lessons']['L043'] = {"scope": "tests", "form": "hook", "mode": "warn", "filed": "2020-01-01", "file": "LESSONS.md"}
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+check "dup finds the rules that say the same"  '"$PYBIN" $NA dup "chain the boot check into the commit command" | grep -q L040 && "$PYBIN" $NA dup "chain the boot check into the commit command" | grep -q L041'
+check "dup leaves the unrelated rule out"      '! "$PYBIN" $NA dup "chain the boot check into the commit command" | grep -q L042'
+check "dup L040 names its twin, not itself"    '"$PYBIN" $NA dup L040 | grep -q L041 && ! "$PYBIN" $NA dup L040 | grep -q L040'
+check "dup on different words says nothing"    '[ -z "$("$PYBIN" $NA dup "totally different words about nothing here")" ]'
+"$PYBIN" $NA _fired L043 warn claude tu43 >/dev/null
+OUTW="$(after tu43)"
+# Only additionalContext reaches the model after a tool call; a
+# systemMessage goes to the person, and the person is not who grades.
+check "after a warned commit: ids handed back"  'echo "$OUTW" | grep -q "L043 warned" && echo "$OUTW" | grep -q "na ok L###" && echo "$OUTW" | grep -q "\"additionalContext\"" && echo "$OUTW" | grep -q "\"hookEventName\":\"PostToolUse\""'
+check "the fire is proceeded and ungraded"     '[ "$(col 2)" = L043 ] && [ "$(col 5)" = proceeded ] && [ "$(col 6)" = - ]'
+"$PYBIN" $NA _fired L043 warn claude >/dev/null
+check "copilot: nothing handed back"           '[ -z "$(pay copilot "git commit -m x" | bash .claude/hooks/na/_after.sh --agent copilot)" ]'
+"$PYBIN" $NA _fired L043 warn claude >/dev/null
+check "gemini: a systemMessage instead"        'pay gemini "git commit -m x" | bash .claude/hooks/na/_after.sh --agent gemini | grep -q "\"systemMessage\":\"never-again: L043 warned"'
+# The same hook runs on PostToolUseFailure: a commit that failed landed
+# nothing to grade, so nothing is handed back (the fire is still proceeded:
+# the person did go past the warning).
+"$PYBIN" $NA _fired L043 warn claude tu-fail >/dev/null
+OUTF="$(printf '{"hook_event_name":"PostToolUseFailure","tool_input":{"command":"git commit -m x"},"tool_use_id":"tu-fail"}' | bash .claude/hooks/na/_after.sh)"
+check "a failed commit hands nothing back"     '[ -z "$OUTF" ] && [ "$(col 5)" = proceeded ]'
+check "a quiet commit hands nothing back"      '[ -z "$(after tu-none)" ]'
+OUTS1="$("$PYBIN" $NA stale --commits 1)"
+check "stale: old rule lines with no trace"    'echo "$OUTS1" | grep -q "^  L040" && echo "$OUTS1" | grep -q "^  L041" && echo "$OUTS1" | grep -q "^  L042"'
+check "stale: a hook with a recent fire is not" '! echo "$OUTS1" | grep -q "^  L043"'
+check "stale says a rule line cannot prove itself" 'echo "$OUTS1" | grep -q "no fire can prove a rule line"'
+# The message carries an em dash: git prints UTF-8, and a Windows Python
+# once read it as cp1252 and crashed the first review on the tool's repo.
+git commit -q --allow-empty -m "note on L041 — with a dash" 2>/dev/null
+OUTS2="$("$PYBIN" $NA stale --commits 1)"; RCS=$?
+check "a mention in a commit is a trace"       '[ $RCS -eq 0 ] && ! echo "$OUTS2" | grep -q "^  L041" && echo "$OUTS2" | grep -q "^  L040"'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8'))
+st['lessons']['L044'] = {"scope": "tests", "form": "rule", "filed": "2999-01-01", "file": "LESSONS.md"}
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+check "a lesson younger than the window is not judged" '! "$PYBIN" $NA stale --commits 1 | grep -q "^  L044"'
+OUTR="$("$PYBIN" $NA review)"
+check "review: stale section"                  'echo "$OUTR" | grep -q "^  stale" && echo "$OUTR" | grep -q "L040"'
+check "review: the pair that says the same"    'echo "$OUTR" | grep -q "say the same thing" && echo "$OUTR" | grep -q "L040 ~ L041"'
+check "review: warned past, ungraded"          'echo "$OUTR" | grep -q "warned past, ungraded" && echo "$OUTR" | grep -q "na ok L043"'
+check "review changes nothing"                 'grep -q "(L041)" LESSONS.md && "$PYBIN" $NA review | grep -q "Act through the never-again skill"'
+"$PYBIN" $NA ok L043 >/dev/null; "$PYBIN" $NA wrong L043 >/dev/null 2>&1
+"$PYBIN" $NA _fired L043 warn claude >/dev/null; "$PYBIN" $NA wrong L043 >/dev/null
+check "review: a hook graded wrong twice is noisy" '"$PYBIN" $NA review | grep -q "false positives"'
+check "na --help lists review, stale, dup"     '"$PYBIN" $NA --help | grep -q "na review" && "$PYBIN" $NA --help | grep -q "na stale" && "$PYBIN" $NA --help | grep -q "na dup"'
+"$PYBIN" - <<'PY'
+import json, io, re
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8'))
+for lid in ('L040', 'L041', 'L042', 'L043', 'L044'):
+    st['lessons'].pop(lid, None)
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+q = 'LESSONS.md'
+t = io.open(q, encoding='utf-8').read()
+t = "\n".join(ln for ln in t.split("\n") if not re.search(r"\(L04[0-4]\)\s*$", ln))
+io.open(q, 'w', encoding='utf-8').write(t)
 PY
 
 echo
