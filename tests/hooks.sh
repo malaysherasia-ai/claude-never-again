@@ -833,6 +833,7 @@ check "copilot: own file"                  'grep -q preToolUse .github/hooks/nev
 # reads, so the release nudge is invisible there: the stop is set once, when
 # the agent joins, and a choice made afterwards stands.
 check "antigravity joining sets updates: block" 'grep -q "\"updates\": \"block\"" .claude/never-again/state.json && echo "$OUTA" | grep -q "updates    block"'
+check "the install records that it set it"   'grep -q "\"updatesSetByInstall\"" .claude/never-again/state.json'
 "$PYBIN" - <<'PY'
 import json, io
 p = '.claude/never-again/state.json'
@@ -841,6 +842,16 @@ json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
 PY
 OUTA2="$(bash "$SRC/install.sh" . 2>&1)"
 check "a re-run keeps the person's choice"   'grep -q "\"updates\": \"check\"" .claude/never-again/state.json && ! echo "$OUTA2" | grep -q "updates    block"'
+# A repo that registered Antigravity under an older release has the agent
+# but no record: the first installer that knows about the stop sets it.
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); del st['updatesSetByInstall']
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+OUTA3="$(bash "$SRC/install.sh" . 2>&1)"
+check "an older antigravity install is moved to block once" 'grep -q "\"updates\": \"block\"" .claude/never-again/state.json && echo "$OUTA3" | grep -q "updates    block"'
 # The entry must work from any directory: Antigravity was seen running it
 # from .agents/ itself. Run the exact command from the file, as a shell
 # would, from that directory and from a nested one.
@@ -1025,6 +1036,14 @@ set_cache 9.9.10 9.9.9 "$(date +%s)"
 check "a newer release than the deferred one stops" '[ "$("$PYBIN" $NA _check-update --cached --how)" = "9.9.10 stop" ]'
 set_cache 0.0.1
 check "nothing newer: --later has nothing to defer" '"$PYBIN" $NA upgrade --later | grep -q "Nothing to defer"'
+# A cache ahead of GitHub (a release pulled or retagged) would stop every
+# commit while the way out says there is nothing to do; na upgrade heard
+# GitHub itself, so the cache takes that answer.
+set_cache 9.9.9; printf '{"tag_name":"v0.0.1"}' > "$TMPDIR_ROOT/na-release.json"
+OUTU="$(NA_UPDATE_URL="$RELURL" "$PYBIN" $NA upgrade 2>&1)"
+check "upgrade with nothing newer settles the cache" 'echo "$OUTU" | grep -q "Nothing to do" && [ -z "$("$PYBIN" $NA _check-update --cached --how)" ]'
+check "the stop is gone with it"             'bash .claude/hooks/na/pre-commit >/dev/null 2>&1'
+check "--from a local copy leaves the cache alone" 'set_cache 9.9.9; "$PYBIN" $NA upgrade --check --from "$SRC" >/dev/null 2>&1; [ "$("$PYBIN" $NA _check-update --cached)" = "9.9.9" ]'
 set_updates check; set_cache 9.9.9
 check "check mode: --how says nudge"         '[ "$("$PYBIN" $NA _check-update --cached --how)" = "9.9.9 nudge" ]'
 OUTL="$("$PYBIN" $NA upgrade --later 2>&1)"
