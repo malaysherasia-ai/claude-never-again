@@ -207,6 +207,18 @@ When you see it, do one of two things and nothing else:
 Do not reword the commit message to get past it. `"capture": "off"` in
 `state.json` is the person's switch, not yours; `"block"` makes it refuse.
 
+A commit can also be refused because this repo runs an old release:
+
+```
+never-again 1.8.0 is out (this repo has 1.7.0). This commit is stopped until the repo moves: ...
+```
+
+Run `.claude/never-again/na upgrade` and commit again. If the person has
+said not now, `.claude/never-again/na upgrade --later` lets commits
+through until tomorrow or the next release. Do not edit `state.json` or
+the hooks to get past it, and do not retry the commit unchanged: the same
+stop comes back.
+
 ## Importing notes that predate the tool
 
 Most repositories already hold lessons somewhere: a `CLAUDE.md` full of

@@ -829,6 +829,29 @@ check "codex: own entry kept"              'grep -q "echo mine" .codex/hooks.jso
 check "codex: after-hook registered"       'grep -q "codex --after" .codex/hooks.json'
 check "gemini: BeforeTool + AfterTool"     'grep -q BeforeTool .gemini/settings.json && grep -q AfterTool .gemini/settings.json'
 check "copilot: own file"                  'grep -q preToolUse .github/hooks/never-again.json && grep -q '"'"'"version": 1'"'"' .github/hooks/never-again.json'
+# Antigravity never calls the IDE hook and its git runs in a terminal nobody
+# reads, so the release nudge is invisible there: the stop is set once, when
+# the agent joins, and a choice made afterwards stands.
+check "antigravity joining sets updates: block" 'grep -q "\"updates\": \"block\"" .claude/never-again/state.json && echo "$OUTA" | grep -q "updates    block"'
+check "the install records that it set it"   'grep -q "\"updatesSetByInstall\"" .claude/never-again/state.json'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['updates'] = 'check'
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+OUTA2="$(bash "$SRC/install.sh" . 2>&1)"
+check "a re-run keeps the person's choice"   'grep -q "\"updates\": \"check\"" .claude/never-again/state.json && ! echo "$OUTA2" | grep -q "updates    block"'
+# A repo that registered Antigravity under an older release has the agent
+# but no record: the first installer that knows about the stop sets it.
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); del st['updatesSetByInstall']
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+OUTA3="$(bash "$SRC/install.sh" . 2>&1)"
+check "an older antigravity install is moved to block once" 'grep -q "\"updates\": \"block\"" .claude/never-again/state.json && echo "$OUTA3" | grep -q "updates    block"'
 # The entry must work from any directory: Antigravity was seen running it
 # from .agents/ itself. Run the exact command from the file, as a shell
 # would, from that directory and from a nested one.
@@ -899,6 +922,13 @@ echo
 echo "=== a newer release is noticed once a day, named on the next commit ==="
 CACHE=.claude/never-again/.update-check
 rm -f "$CACHE"
+# Registering Antigravity above set "block"; this block is about the nudge.
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['updates'] = 'check'
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
 printf '{"tag_name":"v9.9.9"}' > "$TMPDIR_ROOT/na-release.json"
 RELURL="file:///$(cd "$TMPDIR_ROOT" && { pwd -W 2>/dev/null || pwd -P; } | sed 's,^/,,')/na-release.json"
 check "nothing cached: --cached says nothing" '[ -z "$("$PYBIN" $NA _check-update --cached)" ] && [ ! -f "$CACHE" ]'
@@ -946,6 +976,82 @@ PY
 rm -f "$CACHE" "$TMPDIR_ROOT/na-release.json"
 check "new state.json carries the setting"   'grep -q "\"updates\": \"check\"" .claude/never-again/state.json'
 check ".update-check is ignored"             'git check-ignore -q .claude/never-again/.update-check'
+
+echo
+echo "=== \"updates\": \"block\": a stale release stops the commit, not a line ==="
+# The line on a successful commit's stderr was committed straight past by an
+# agent that runs git in a terminal nobody reads (L006). A refused command is
+# read: from every agent's hook and from git's own pre-commit.
+set_updates() { "$PYBIN" - "$1" <<'PY'
+import json, io, sys
+p = '.claude/never-again/state.json'
+st = json.load(io.open(p, encoding='utf-8')); st['updates'] = sys.argv[1]
+json.dump(st, io.open(p, 'w', encoding='utf-8'), indent=2)
+PY
+}
+set_cache() { "$PYBIN" - "$@" <<'PY'
+import json, io, sys, time
+p = '.claude/never-again/.update-check'
+c = {"ts": time.time(), "latest": sys.argv[1], "checked_by": "test"}
+if len(sys.argv) > 2: c["later"] = sys.argv[2]; c["laterTs"] = float(sys.argv[3])
+json.dump(c, io.open(p, 'w', encoding='utf-8'))
+PY
+}
+set_updates block; set_cache 9.9.9
+check "--how says stop"                      '[ "$("$PYBIN" $NA _check-update --cached --how)" = "9.9.9 stop" ]'
+check "--cached alone still just the version" '[ "$("$PYBIN" $NA _check-update --cached)" = "9.9.9" ]'
+OUTB="$(pay claude "git commit -m x" | NA_DRY_RUN=1 bash .claude/hooks/na/dispatch)"
+check "Claude Code: the commit is denied"    'echo "$OUTB" | grep -q "\"permissionDecision\": \"deny\"" && echo "$OUTB" | grep -q "9.9.9 is out"'
+check "the reason names the way out"         'echo "$OUTB" | grep -q "na upgrade" && echo "$OUTB" | grep -q "upgrade --later"'
+check "no nudge line on top of the stop"     '! echo "$OUTB" | grep -q "when convenient"'
+check "not on other commands"                '[ -z "$(pay claude ls | NA_DRY_RUN=1 bash .claude/hooks/na/dispatch)" ]'
+OUTB="$(pay antigravity "git commit -m x" | NA_DRY_RUN=1 bash .claude/hooks/na/dispatch --agent antigravity)"
+check "Antigravity: decision deny"           'echo "$OUTB" | grep -q "\"decision\": \"deny\"" && echo "$OUTB" | grep -q "\"allow_tool\": false"'
+echo fine > u.txt; git add u.txt     # no hook has anything to say; the release is the only stop
+ERRB="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"; RCB=$?
+check "git side: the commit is refused"      '[ $RCB -ne 0 ] && echo "$ERRB" | grep -q "stopped until the repo moves"'
+check "a stopped commit is a fired call"     '[ "$(awk -F"\t" "END{print \$3\" \"\$4}" .claude/never-again/calls.log)" = "git fired" ]'
+check "retrying unchanged does not get past" 'bash .claude/hooks/na/pre-commit >/dev/null 2>&1; [ $? -ne 0 ]'
+check "na says commits stop"                 '"$PYBIN" $NA | grep -q "commits stop until then"'
+OUTL="$("$PYBIN" $NA upgrade --later 2>&1)"
+check "--later defers and says so"           'echo "$OUTL" | grep -q "9.9.9 deferred" && "$PYBIN" -c "import json,sys; c=json.load(open(\".claude/never-again/.update-check\")); sys.exit(0 if c.get(\"later\")==\"9.9.9\" and c.get(\"laterTs\") else 1)"'
+check "deferred: --how says nudge"           '[ "$("$PYBIN" $NA _check-update --cached --how)" = "9.9.9 nudge" ]'
+ERRB="$(bash .claude/hooks/na/pre-commit 2>&1 >/dev/null)"; RCB=$?
+check "deferred: git commit goes ahead"      '[ $RCB -eq 0 ] && echo "$ERRB" | grep -q "9.9.9 is out" && ! echo "$ERRB" | grep -q stopped'
+OUTB="$(pay claude "git commit -m x" | NA_DRY_RUN=1 bash .claude/hooks/na/dispatch)"
+check "deferred: Claude Code gets the line"  '! echo "$OUTB" | grep -q deny && echo "$OUTB" | grep -q "when convenient"'
+check "na says it is deferred"               '"$PYBIN" $NA | grep -q "deferred: commits go ahead"'
+"$PYBIN" - <<'PY'
+import json, io
+p = '.claude/never-again/.update-check'
+c = json.load(io.open(p, encoding='utf-8')); c['ts'] = 0
+json.dump(c, io.open(p, 'w', encoding='utf-8'))
+PY
+printf '{"tag_name":"v9.9.9"}' > "$TMPDIR_ROOT/na-release.json"
+NA_UPDATE_URL="$RELURL" "$PYBIN" $NA _check-update >/dev/null
+check "the daily refresh keeps the deferral" '[ "$("$PYBIN" $NA _check-update --cached --how)" = "9.9.9 nudge" ]'
+set_cache 9.9.9 9.9.9 0
+check "a day later the stop is back"         '[ "$("$PYBIN" $NA _check-update --cached --how)" = "9.9.9 stop" ]'
+set_cache 9.9.10 9.9.9 "$(date +%s)"
+check "a newer release than the deferred one stops" '[ "$("$PYBIN" $NA _check-update --cached --how)" = "9.9.10 stop" ]'
+set_cache 0.0.1
+check "nothing newer: --later has nothing to defer" '"$PYBIN" $NA upgrade --later | grep -q "Nothing to defer"'
+# A cache ahead of GitHub (a release pulled or retagged) would stop every
+# commit while the way out says there is nothing to do; na upgrade heard
+# GitHub itself, so the cache takes that answer.
+set_cache 9.9.9; printf '{"tag_name":"v0.0.1"}' > "$TMPDIR_ROOT/na-release.json"
+OUTU="$(NA_UPDATE_URL="$RELURL" "$PYBIN" $NA upgrade 2>&1)"
+check "upgrade with nothing newer settles the cache" 'echo "$OUTU" | grep -q "Nothing to do" && [ -z "$("$PYBIN" $NA _check-update --cached --how)" ]'
+check "the stop is gone with it"             'bash .claude/hooks/na/pre-commit >/dev/null 2>&1'
+check "--from a local copy leaves the cache alone" 'set_cache 9.9.9; "$PYBIN" $NA upgrade --check --from "$SRC" >/dev/null 2>&1; [ "$("$PYBIN" $NA _check-update --cached)" = "9.9.9" ]'
+set_updates check; set_cache 9.9.9
+check "check mode: --how says nudge"         '[ "$("$PYBIN" $NA _check-update --cached --how)" = "9.9.9 nudge" ]'
+OUTL="$("$PYBIN" $NA upgrade --later 2>&1)"
+check "--later under check says commits never stopped" 'echo "$OUTL" | grep -q "never stopped"'
+set_updates off
+check "off: --how says nothing"              '[ -z "$("$PYBIN" $NA _check-update --cached --how)" ]'
+set_updates check
+git reset -q u.txt; rm -f u.txt "$CACHE" "$TMPDIR_ROOT/na-release.json"
 
 echo
 echo "=== na upgrade moves one repo, on request, forwards only ==="

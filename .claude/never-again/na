@@ -11,7 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -26,9 +26,11 @@ Everything here is counted, not reasoned. It costs no tokens by design.
   na uninstall    remove never-again from this repo (--yes to skip the prompt)
   na upgrade      fetch the newest release and re-run its installer here;
                   a newer release is noticed once a day after a commit and
-                  named on the next one ("updates": "off" in state.json stops that)
-                  (--check only looks; --yes skips the prompt; --from DIR|TARBALL
-                  installs from a local copy instead of GitHub)
+                  named on the next one ("updates": "off" in state.json stops that;
+                  "block" stops the commit itself until the repo moves)
+                  (--check only looks; --yes skips the prompt; --later lets
+                  commits through until tomorrow or the next release; --from
+                  DIR|TARBALL installs from a local copy instead of GitHub)
   na ok      L017 the latest fire was right      (grades that fire; counts toward promotion)
   na wrong   L017 the latest fire was a false positive (grades it; streak resets)
   na promote L017 warn -> block
@@ -1431,7 +1433,21 @@ def cmd_agents(argv):
                 if name not in agents:
                     agents.append(name)
         i += 1
-    if state is not None and agents != list(state.get("agents") or []):
+    changed = state is not None and agents != list(state.get("agents") or [])
+    # Antigravity has never been seen calling the IDE hook, and its git
+    # commits run in a terminal nobody reads, so the one-line release nudge
+    # is invisible there. The stop is not: a refused commit is read. Set
+    # once per repo, the first time an installer sees Antigravity here,
+    # and remembered as "updatesSetByInstall" so the person's later choice
+    # in state.json stands through every re-run and upgrade.
+    if state is not None and "antigravity" in agents and not state.get("updatesSetByInstall"):
+        state["updatesSetByInstall"] = VERSION
+        if str(state.get("updates", "check")).lower() == "check":
+            state["updates"] = "block"
+            sys.stderr.write("  updates    block: a stale release stops the next commit until `na upgrade`\n"
+                             "             (Antigravity never sees the one-line nudge; \"updates\": \"check\" in state.json restores it)\n")
+        changed = True
+    if changed:
         state["agents"] = agents
         save(state)
     for name in agents:
@@ -1694,12 +1710,28 @@ def _read_update_cache():
         return {}
 
 
+def _update_how(cache, latest, now=None):
+    """How the dispatcher delivers a newer release: "stop" refuses the
+    commit until the repo moves (or `na upgrade --later` defers it for a
+    day), "nudge" is one line on a commit that goes ahead. A line printed
+    by a command that succeeded is a reminder, and the field showed an
+    agent commit straight past it; only a stopped command is read."""
+    if _updates_setting() != "block":
+        return "nudge"
+    now = time.time() if now is None else now
+    if cache.get("later") == latest and now - float(cache.get("laterTs") or 0) < CHECK_EVERY_S:
+        return "nudge"
+    return "stop"
+
+
 def cmd_check_update(argv):
-    """`na _check-update [--cached]`: print the newest release's version when
-    it is newer than this one, else nothing. Without --cached, refresh the
-    answer from GitHub once a day: one request, nothing sent but the
-    request, never on the commit path (the after-commit hook calls it). Off
-    entirely with "updates": "off" in state.json."""
+    """`na _check-update [--cached] [--how]`: print the newest release's
+    version when it is newer than this one, else nothing. Without --cached,
+    refresh the answer from GitHub once a day: one request, nothing sent but
+    the request, never on the commit path (the after-commit hook calls it).
+    --how adds a word: "9.9.9 stop" when the commit must not go ahead,
+    "9.9.9 nudge" when it may. Off entirely with "updates": "off" in
+    state.json."""
     if _updates_setting() == "off":
         return 0
     cache = _read_update_cache()
@@ -1715,7 +1747,8 @@ def cmd_check_update(argv):
                 latest = str(json.load(r).get("tag_name", "")).lstrip("v")
         except Exception:
             latest = cache.get("latest", "")   # offline: keep what we knew, try tomorrow
-        cache = {"ts": now, "latest": latest, "checked_by": VERSION}
+        deferred = {k: cache[k] for k in ("later", "laterTs") if k in cache}
+        cache = dict(deferred, ts=now, latest=latest, checked_by=VERSION)
         try:
             os.makedirs(BASE, exist_ok=True)
             with open(UPDATE_CACHE, "w", encoding="utf-8", newline="\n") as fh:
@@ -1724,7 +1757,7 @@ def cmd_check_update(argv):
             pass
     latest = cache.get("latest") or ""
     if latest and _vtuple(latest) > _vtuple(VERSION):
-        print(latest)
+        print("%s %s" % (latest, _update_how(cache, latest, now)) if "--how" in argv else latest)
     return 0
 
 
@@ -1732,20 +1765,65 @@ def _print_update_nudge():
     cache = _read_update_cache()
     latest = cache.get("latest") or ""
     if _updates_setting() != "off" and latest and _vtuple(latest) > _vtuple(VERSION):
+        how = _update_how(cache, latest)
         print("  update          %s is out (this repo has %s): na upgrade" % (latest, VERSION))
+        if how == "stop":
+            print("                  commits stop until then (na upgrade --later lets them through for a day)")
+        elif _updates_setting() == "block":
+            print("                  deferred: commits go ahead until tomorrow or the next release")
         print()
+
+
+def defer_update():
+    """`na upgrade --later`: a newer release is known and now is not the
+    time. Commits go ahead for a day, or until a newer release than this one
+    shows up; then the stop is back. Only means something with "updates":
+    "block"; under "check" the nudge never stopped anything."""
+    cache = _read_update_cache()
+    latest = cache.get("latest") or ""
+    if not latest or _vtuple(latest) <= _vtuple(VERSION):
+        print("  Nothing to defer: no newer release is known here.")
+        return 0
+    cache["later"], cache["laterTs"] = latest, time.time()
+    try:
+        os.makedirs(BASE, exist_ok=True)
+        with open(UPDATE_CACHE, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(cache, fh)
+    except OSError as exc:
+        print("  could not write %s: %s" % (UPDATE_CACHE, exc))
+        return 1
+    print("  %s deferred: commits go ahead until tomorrow or the next release; then `na upgrade` is asked for again." % latest)
+    if _updates_setting() != "block":
+        print("  (\"updates\" is %r here, so commits were never stopped; \"block\" in state.json does that.)" % _updates_setting())
+    return 0
 
 
 def _latest_release():
     """(tag, tarball url) of the newest release on GitHub."""
     import urllib.request
-    req = urllib.request.Request(RELEASE_URL,
+    req = urllib.request.Request(os.environ.get("NA_UPDATE_URL") or RELEASE_URL,
                                  headers={"Accept": "application/vnd.github+json",
                                           "User-Agent": "never-again/" + VERSION})
     with urllib.request.urlopen(req, timeout=20) as r:
         d = json.load(r)
     tag = d["tag_name"]
     return tag, "https://github.com/%s/archive/refs/tags/%s.tar.gz" % (REPO, tag)
+
+
+def _settle_update_cache(latest):
+    """`na upgrade` just asked GitHub itself: what it heard is the truth the
+    once-a-day cache should hold. A cache ahead of GitHub (a release pulled
+    or retagged) would otherwise stop every commit under "block" while the
+    one command the stop names says there is nothing to do; and with no
+    commit landing, nothing would ever refresh it."""
+    cache = _read_update_cache()
+    deferred = {k: cache[k] for k in ("later", "laterTs") if k in cache}
+    try:
+        os.makedirs(BASE, exist_ok=True)
+        with open(UPDATE_CACHE, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(dict(deferred, ts=time.time(), latest=latest, checked_by=VERSION), fh)
+    except OSError:
+        pass
 
 
 def _fetch_source(url, dest):
@@ -1774,7 +1852,12 @@ def _fetch_source(url, dest):
 
 
 def upgrade(argv):
-    """`na upgrade [--check] [--yes] [--from DIR|TARBALL]`."""
+    """`na upgrade [--check] [--yes] [--later] [--from DIR|TARBALL]`."""
+    if "--later" in argv:
+        print()
+        rc = defer_update()
+        print()
+        return rc
     check = "--check" in argv
     assume_yes = "--yes" in argv or "-y" in argv
     src_opt = None
@@ -1815,6 +1898,7 @@ def upgrade(argv):
                 return 1
             new = tag.lstrip("v")
             label = "%s (release %s)" % (new, tag)
+            _settle_update_cache(new)
 
         print("  installed  %s" % VERSION)
         print("  available  %s" % label)
