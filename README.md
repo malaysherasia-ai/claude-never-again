@@ -53,6 +53,17 @@ next release. A repo that registers Antigravity gets `"block"` at install,
 because that IDE has never been seen running the hook and only the git side
 can reach it; change it in `state.json` and the installer leaves it alone.
 
+**Reviewing.** Rules decay by evidence, not by a clock. `na review` counts
+what the record says and prints every proposal it supports, changing
+nothing: lessons with no trace in the last 50 commits (`na stale`), rules
+that say the same thing (`na dup`, which the skill also runs before filing
+a rule line), hooks ready to promote, warned-past fires nobody graded, and
+hooks graded wrong twice or more. The agent acts on it through the skill;
+retiring and promoting stay the person's call. A warned-past fire counts
+for nothing until graded, so after a commit goes past a warning, the
+after-commit hook hands the ids back to the agent in one line and the
+agent grades them from the reason and the diff, once.
+
 **Run the installer yourself, from a terminal.** Claude Code's auto mode will
 not run an installer it has never seen. It also will not edit its own
 `.claude/settings.json` or write into `.git/hooks/`, even when you say yes.
@@ -459,14 +470,18 @@ AGENTS.md, GEMINI.md,
 ```
 
 **Already have notes?** Most repos do: a `CLAUDE.md` full of rules, a
-`NOTES.md`, a `docs/lessons.md`, a `.cursorrules`. `na import` lists them,
-with how many lines of notes each one holds and which were imported before.
-Tell Claude once, *"import the existing notes with the never-again skill"*.
+`NOTES.md`, a `docs/lessons.md`, an editor's rules folder, and Claude
+Code's own memory for the project under `~/.claude/projects/`. `na import`
+lists them, with how many lines of notes each one holds and which were
+imported before, and `na` and `na review` keep naming them until they are
+imported, because nothing already written down should go to waste. Tell
+Claude once, *"import the existing notes with the never-again skill"*.
 Each note then goes through the same sorting as a fresh bug. The ones a
 script can check become hooks in warn mode. The judgement calls become
-one-liners. The rest are skipped. The source files are never edited. The tool
-only remembers which files were imported, so the next `na import` shows only
-what changed.
+one-liners. The rest are skipped, with the reason written down in the
+archive so a later review can pick them up. The source files are never
+edited. The tool only remembers which files were imported, so the next
+`na import` shows only what changed.
 
 **Already have a `LESSONS.md`?** It stays exactly as it is, and Claude keeps
 reading it. But notes in your own words are invisible to `na`: not counted,

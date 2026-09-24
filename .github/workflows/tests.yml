@@ -22,6 +22,22 @@ jobs:
         with:
           python-version: "3.x"
       - name: hook suite
-        run: bash tests/hooks.sh
+        run: bash tests/hooks.sh 2>&1 | tee hooks.out
       - name: uninstall suite
-        run: bash tests/uninstall.sh
+        if: always()
+        run: bash tests/uninstall.sh 2>&1 | tee uninstall.out
+      # The run page shows only job names; the counts and any failed check
+      # go on the run's summary so nobody has to open a log to see them.
+      - name: summary
+        if: always()
+        run: |
+          for s in hooks uninstall; do
+            echo "### $s suite, ${{ matrix.os }}" >> "$GITHUB_STEP_SUMMARY"
+            if [ -f "$s.out" ] && grep -qE '[0-9]+ passed, [0-9]+ failed' "$s.out"; then
+              grep -E '[0-9]+ passed, [0-9]+ failed' "$s.out" | sed 's/^ *//' >> "$GITHUB_STEP_SUMMARY"
+              grep '  FAIL' "$s.out" | sed 's/^ *FAIL */- FAIL: /' >> "$GITHUB_STEP_SUMMARY" || true
+            else
+              echo "did not finish" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo >> "$GITHUB_STEP_SUMMARY"
+          done

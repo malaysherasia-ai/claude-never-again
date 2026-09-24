@@ -11,7 +11,7 @@ done
 echo "never-again: no working python found" >&2
 exit 1
 ":"""
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 USAGE = """na — never-again local CLI.
 
 Everything here is counted, not reasoned. It costs no tokens by design.
@@ -23,6 +23,13 @@ Everything here is counted, not reasoned. It costs no tokens by design.
   na sweep   L017 run one hook's check over every file in the tree, not just a
                   commit's files, and print the hits; nothing is recorded
   na sort         reorder rule lines by fire count (most-hit first) in each LESSONS.md
+  na review       every proposal the record supports, on one page: stale lessons,
+                  rules that say the same thing, hooks ready to promote, warned-past
+                  fires nobody graded, noisy hooks. Changes nothing
+  na stale        lessons with no trace in the last 50 commits: no fire, no grade,
+                  no mention, no archive change (--commits N for another window)
+  na dup "text"   existing rules that say much the same as this one; run it before
+                  filing a rule line (na dup L017 compares a filed rule)
   na uninstall    remove never-again from this repo (--yes to skip the prompt)
   na upgrade      fetch the newest release and re-run its installer here;
                   a newer release is noticed once a day after a commit and
@@ -288,7 +295,7 @@ def tree_fingerprint():
     import subprocess
     try:
         p = subprocess.run(["git", "-C", ROOT, "status", "--porcelain=v1", "-uall"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
     except OSError:
         return "-"
     if p.returncode != 0:
@@ -353,6 +360,11 @@ def cmd_proceeded(argv):
     for r in pending:
         r["outcome"] = "proceeded"
     write_log(rows)
+    # The ids that just went past a warning, one per line, for the
+    # after-commit hook to hand back: a proceeded fire counts only once
+    # graded, and the agent that saw the reason and the diff can grade it.
+    for lid in sorted({r["id"] for r in pending if r["id"] != CAPTURE_ID}):
+        print(lid)
     return 0
 
 
@@ -441,6 +453,12 @@ def stats():
         print()
         print("  ready to promote: " + ", ".join(sorted(ready)))
         print("    na promote " + sorted(ready)[0])
+
+    todo = notes_todo()
+    if todo:
+        print()
+        print(f"  notes           {len(todo)} file{'s' if len(todo) != 1 else ''} of existing rules or lessons not imported yet"
+              f" ({sum(n for _, n in todo)} lines): na import")
 
     over = [p for p in lesson_files() if len(rules([p])) >= cap]
     if over:
@@ -782,7 +800,7 @@ def mark(lid, correct):
 def _git(*args):
     import subprocess
     try:
-        p = subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True)
+        p = subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True, encoding="utf-8", errors="replace")
         return p.stdout.strip() if p.returncode == 0 else ""
     except OSError:
         return ""
@@ -974,6 +992,250 @@ GITIGNORE_UNIGNORE = (
     "!.claude/never-again/",
     "!.claude/skills/", ".claude/skills/*", "!.claude/skills/never-again/",
 ) + tuple(l for l in GITIGNORE_LINES if l.startswith(".claude/never-again/"))
+
+
+# ---------------------------------------------------------------------------
+# review: what the record says about the rules, counted, never changed
+#
+# A hook proves itself through fires. A rule line proves nothing on its own,
+# so the only evidence for one is what the repo did with it: a fire, a grade,
+# its id in a commit message, its archive touched. `na stale` lists lessons
+# with none of that in the last N commits; `na dup` finds rules that say the
+# same thing; `na review` puts every proposal on one page. None of them
+# changes a file: the skill acts, the person decides.
+# ---------------------------------------------------------------------------
+
+STOPWORDS = set("""a an the and or but not no never of in on at to for from by with as is are be
+was were been it its this that these those when before after every each any all one once
+into than then so if do does did done use used using when: -""".split())
+STALE_COMMITS = 50
+DUP_AT = 0.5
+
+
+def _tokens(text):
+    """Content words of a rule, roughly stemmed, so 'commits' and 'commit'
+    or 'chained' and 'chain' count as the same word."""
+    out = set()
+    for w in re.findall(r"[a-z0-9][a-z0-9_.-]*", text.lower()):
+        w = w.strip(".-")
+        if not w or w in STOPWORDS or len(w) < 3:
+            continue
+        for suf in ("ing", "ed", "es", "s"):
+            if len(w) > len(suf) + 3 and w.endswith(suf):
+                w = w[:-len(suf)]
+                break
+        out.add(w)
+    return out
+
+
+def similarity(a, b):
+    """Overlap of content words, sized by the shorter rule, so a long rule
+    that contains a short one scores high. 1.0 is the same words."""
+    ta, tb = _tokens(a), _tokens(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / min(len(ta), len(tb))
+
+
+def _near(text, exclude=None, at=DUP_AT):
+    hits = []
+    for path, lid, scope, rule in rules():
+        if lid == exclude:
+            continue
+        s = similarity(text, rule)
+        if s >= at and len(_tokens(text) & _tokens(rule)) >= 3:
+            hits.append((s, path, lid, scope, rule))
+    return sorted(hits, reverse=True)
+
+
+def dup(argv):
+    """`na dup "rule text"` or `na dup L017`: existing rules that say much
+    the same thing. Run before appending a rule line; sharpen the one that
+    exists rather than filing a second. Prints nothing when none."""
+    if not argv:
+        sys.exit('usage: na dup "rule text"  |  na dup L017')
+    text, exclude = " ".join(argv), None
+    if re.fullmatch(r"[lL]\d+", text):
+        exclude = text.upper()
+        text = next((t for _, i, _, t in rules() if i == exclude), None)
+        if text is None:
+            sys.exit(f"{exclude} has no rule line")
+    hits = _near(text, exclude)
+    for s, path, lid, scope, rule in hits:
+        print(f"  {lid}  {int(s * 100):>3}%  [{scope}] {rule}  ({path})")
+    return 0
+
+
+def _window(n):
+    """(oldest timestamp, commits in the window, all commit timestamps, text)
+    for the last N commits: their messages and the paths they touched, which
+    is where a rule line leaves a trace. The window is at most N commits and
+    at most what the repo has."""
+    stamps = _git("log", "-n", "5000", "--format=%ct")
+    if not stamps:
+        return None, 0, [], ""
+    allts = [float(s) for s in stamps.split()]
+    window = allts[:n]
+    text = _git("log", "-n", str(n), "--format=%B", "--name-only")
+    return window[-1], len(window), allts, text
+
+
+def _filed_ts(filed):
+    """A lesson's filed date as a timestamp; None when there is none or it
+    does not parse, which means: judge it."""
+    import calendar
+    try:
+        return float(calendar.timegm(time.strptime(str(filed)[:10], "%Y-%m-%d")))
+    except (ValueError, OverflowError):
+        return None
+
+
+def stale_lessons(n=STALE_COMMITS):
+    """Lessons with no evidence in the last N commits: no fire, no grade, no
+    mention of the id in a commit message, no touch of the archive entry.
+    Returns (lid, entry, why) for each. A lesson filed inside the window is
+    not judged: fewer commits have passed since it was filed than the window
+    holds, so it has not had the chance to leave a trace."""
+    state = load()
+    since, count, allts, text = _window(n)
+    if since is None:
+        return []
+    fr = fires()
+    out = []
+    for lid, entry in sorted(state.get("lessons", {}).items()):
+        if entry.get("retired") or entry.get("mode") == "retired":
+            continue
+        filed_at = _filed_ts(entry.get("filed"))
+        if filed_at is not None:
+            # git's own --since treats an odd date as no filter at all, so
+            # count the commits after the filed date from the timestamps.
+            age = sum(1 for t in allts if t >= filed_at)
+            if age < count:
+                continue
+        mine = [r for r in fr if r["id"] == lid and parse_ts(r["ts"]) >= since]
+        if mine:
+            continue
+        if re.search(r"\b" + lid + r"\b", text) or ("archive/%s.md" % lid) in text:
+            continue
+        if entry.get("form") == "hook":
+            why = "the check never fired in %d commits: the mistake stopped, or the check misses it (na sweep %s)" % (n, lid)
+        else:
+            why = "no fire can prove a rule line: retire it if the mistake stopped, or make it a hook if a script could judge"
+        out.append((lid, entry, why))
+    return out
+
+
+def stale(argv):
+    """`na stale [--commits N]`: lessons the record has no evidence for."""
+    n = STALE_COMMITS
+    if "--commits" in argv:
+        try:
+            n = int(argv[argv.index("--commits") + 1])
+        except (IndexError, ValueError):
+            sys.exit("usage: na stale [--commits N]")
+    rs = {i: t for _, i, _, t in rules()}
+    found = stale_lessons(n)
+    if not found:
+        print("  nothing stale: every lesson older than %d commits left a trace in them" % n)
+        return 0
+    print("  no trace in the last %d commits (no fire, grade, mention or archive change):" % n)
+    for lid, entry, why in found:
+        label = rs.get(lid) or entry.get("rule") or ""
+        print(f"  {lid}  {entry.get('form', '-'):<4} {entry.get('mode', '-'):<5} filed {entry.get('filed') or '-'}  {label[:70]}")
+        print(f"          {why}")
+    print("  nothing changed; retire with na retire L###, or promote through the skill")
+    return 0
+
+
+def review():
+    """`na review`: every proposal the record supports, on one page, for
+    the skill to act on and the person to decide. Changes nothing."""
+    state = load()
+    rs = rules()
+    fr = [r for r in fires() if r["id"] != CAPTURE_ID]
+    lessons = state.get("lessons", {})
+    text = {i: t for _, i, _, t in rs}
+    n_items = 0
+    print()
+    print("  never-again review  (counted from the record; nothing here changed anything)")
+    print("  " + "-" * 70)
+
+    st = stale_lessons()
+    if st:
+        n_items += len(st)
+        print(f"\n  stale  ({len(st)}, no trace in the last {STALE_COMMITS} commits)")
+        for lid, entry, why in st:
+            print(f"    {lid}  {(text.get(lid) or entry.get('rule') or '')[:64]}")
+            print(f"          {why}")
+
+    pairs, seen = [], set()
+    for _, a, _, ta in rs:
+        for s, _, b, _, tb in _near(ta, a):
+            key = tuple(sorted((a, b)))
+            if key not in seen:
+                seen.add(key)
+                pairs.append((s, a, b, ta, tb))
+    if pairs:
+        n_items += len(pairs)
+        print(f"\n  say the same thing  ({len(pairs)} pair{'s' if len(pairs) != 1 else ''}; keep the sharper one, retire the other)")
+        for s, a, b, ta, tb in sorted(pairs, reverse=True):
+            print(f"    {a} ~ {b}  {int(s * 100)}%")
+            print(f"      {a}: {ta[:70]}")
+            print(f"      {b}: {tb[:70]}")
+
+    ready = sorted(k for k, v in lessons.items()
+                   if v.get("form") == "hook" and v.get("mode") == "warn" and streak(fr, k) >= PROMOTE_AT)
+    if ready:
+        n_items += len(ready)
+        print(f"\n  ready to promote  ({len(ready)}, {PROMOTE_AT} correct fires in a row; the person decides)")
+        for lid in ready:
+            print(f"    na promote {lid}    {(text.get(lid) or '')[:60]}")
+
+    ungraded = Counter(r["id"] for r in fr if r["outcome"] == "proceeded" and r["grade"] == "-")
+    if ungraded:
+        n_items += len(ungraded)
+        print(f"\n  warned past, ungraded  ({sum(ungraded.values())} fires; a proceeded fire counts only once graded)")
+        for lid, c in sorted(ungraded.items()):
+            print(f"    {lid}  {c:>3}   na ok {lid} if the warning was right, na wrong {lid} if not")
+
+    noisy = Counter(r["id"] for r in fr if r["grade"] == "wrong")
+    noisy = {k: v for k, v in noisy.items() if v >= 2}
+    if noisy:
+        n_items += len(noisy)
+        print(f"\n  false positives  ({len(noisy)} hook{'s' if len(noisy) != 1 else ''} graded wrong twice or more; narrow the check)")
+        for lid, c in sorted(noisy.items()):
+            print(f"    {lid}  {c:>3} wrong   {(text.get(lid) or '')[:60]}")
+
+    todo = notes_todo()
+    if todo:
+        n_items += len(todo)
+        print(f"\n  not imported yet  ({len(todo)} file{'s' if len(todo) != 1 else ''} of rules or lessons someone already wrote;"
+              " until imported, nothing counts, caps or enforces them)")
+        for rel, n in todo[:8]:
+            print(f"    {rel:<56} {n:>4} line{'s' if n != 1 else ''}")
+        if len(todo) > 8:
+            print(f"    ... and {len(todo) - 8} more (na import lists them)")
+        print("    import them through the skill: every note becomes a hook, a rule line, or a recorded skip")
+
+    cap = state.get("cap", 40)
+    warn_at = state.get("loadedWarn", 60)
+    full = [p for p in lesson_files() if len(rules([p])) >= cap]
+    loaded = len(rules(loaded_files()))
+    if full or loaded > warn_at:
+        n_items += 1
+        print("\n  cost")
+        for p in full:
+            print(f"    {os.path.relpath(p, ROOT)} is at cap {cap}: retire or promote before adding")
+        if loaded > warn_at:
+            print(f"    {loaded} rules load on every turn here (warn above {warn_at}): split by package, retire, or promote")
+
+    print()
+    if n_items:
+        print(f"  {n_items} item{'s' if n_items != 1 else ''}. Act through the never-again skill; retire and promote only with the person's word.")
+    else:
+        print("  nothing to propose: every lesson has evidence, none repeat, none are ready or noisy.")
+    print()
+    return 0
 
 
 def _read_text(path):
@@ -1498,9 +1760,81 @@ IMPORT_NAMES = {
     ".clinerules", "copilot-instructions.md", "handover.md",
 }
 IMPORT_WORDS = ("lesson", "learn", "gotcha", "mistake", "pitfall", "postmortem",
-                "post-mortem", "retro")
+                "post-mortem", "retro", "rule", "instruction", "guideline",
+                "convention", "decision", "steering")
+# Folders whose every .md/.mdc/.txt is a rules file for some editor or agent.
+IMPORT_DIRS = (".cursor/rules", ".windsurf/rules", ".clinerules", ".roo/rules",
+               ".github/instructions", ".kiro/steering", ".junie", ".agents/rules",
+               ".gemini/rules")
 IMPORT_SKIP_DIRS = {".git", "node_modules", ".claude", "dist", "build", "vendor",
                     "coverage", ".venv", "venv", "target", "__pycache__"}
+
+
+def _note_lines(text):
+    return [ln for ln in text.split("\n")
+            if ln.strip() and not ln.lstrip().startswith(("#", "<!--", "```", "---"))]
+
+
+def _path_slug(path):
+    """Claude Code names a project folder after its working directory with
+    every separator turned into a dash: C:\\Users\\me\\app -> C--Users-me-app,
+    /home/me/app -> -home-me-app."""
+    return re.sub(r"[:\\/.]", "-", path)
+
+
+def memory_candidates():
+    """Claude Code's own memory for this project: ~/.claude/projects/<slug>/
+    memory/*.md, where the slug is the directory Claude was started in: this
+    repo or one of its parents. These files hold
+    what the person already told an agent (feedback, project facts) and
+    they are the lessons most likely to be lost: they live outside the repo
+    and only one agent reads them. Listed as ~/... so a mark finds them."""
+    home = os.path.expanduser("~")
+    projects = os.path.join(home, ".claude", "projects")
+    if not os.path.isdir(projects):
+        return []
+    # The slug is lossy: app-docs (a sibling) and app/docs (a subdirectory)
+    # spell the same. So no string rule can tell them apart, and the match
+    # is exact against the slugs of this repo and its real ancestors, which
+    # are known. A session started in a subdirectory of the repo is not
+    # matched; its memory is for that directory.
+    ours = set()
+    p = os.path.abspath(ROOT)
+    while True:
+        ours.add(_path_slug(p).lower())
+        parent = os.path.dirname(p)
+        if parent == p:
+            break
+        p = parent
+    out = []
+    try:
+        names = sorted(os.listdir(projects))
+    except OSError:
+        return []
+    for p in names:
+        if p.lower() not in ours:
+            continue
+        mem = os.path.join(projects, p, "memory")
+        if not os.path.isdir(mem):
+            continue
+        for name in sorted(os.listdir(mem)):
+            if not name.lower().endswith(".md") or name == "MEMORY.md":   # the index, not a note
+                continue
+            full = os.path.join(mem, name)
+            text = _note_text(full)
+            if text is None or not _note_lines(text):
+                continue
+            out.append(("~/.claude/projects/%s/memory/%s" % (p, name), len(_note_lines(text)), _sha_text(text)))
+    return out
+
+
+def import_path(rel):
+    """A candidate's path on disk: inside the repo, or ~/... for Claude
+    Code's memory."""
+    rel = rel.replace("\\", "/")
+    if rel.startswith("~/"):
+        return os.path.join(os.path.expanduser("~"), *rel[2:].split("/"))
+    return os.path.join(ROOT, rel)
 
 
 def import_candidates():
@@ -1513,11 +1847,13 @@ def import_candidates():
         depth = os.path.relpath(dirpath, ROOT).count(os.sep)
         if depth > 3:
             dirnames[:] = []
+        here = os.path.relpath(dirpath, ROOT).replace(os.sep, "/")
+        in_rules_dir = any(here == d or here.startswith(d + "/") for d in IMPORT_DIRS)
         for name in filenames:
             low = name.lower()
             looks = (low in IMPORT_NAMES
                      or (low.endswith((".md", ".mdc", ".txt")) and any(w in low for w in IMPORT_WORDS))
-                     or (dirpath.replace(os.sep, "/").endswith("/.cursor/rules") and low.endswith(".mdc")))
+                     or (in_rules_dir and low.endswith((".md", ".mdc", ".txt"))))
             if not looks:
                 continue
             full = os.path.join(dirpath, name)
@@ -1526,13 +1862,23 @@ def import_candidates():
             text = _note_text(full)
             if text is None:
                 continue
-            lines = [ln for ln in text.split("\n")
-                     if ln.strip() and not ln.lstrip().startswith(("#", "<!--", "```", "---"))]
+            lines = _note_lines(text)
             if not lines:
                 continue
             rel = os.path.relpath(full, ROOT).replace(os.sep, "/")
             out.append((rel, len(lines), _sha_text(text)))
-    return sorted(out)
+    return sorted(out) + memory_candidates()
+
+
+def notes_todo():
+    """Candidates not yet imported, or changed since: (rel, lines)."""
+    imports = load().get("imports", {})
+    todo = []
+    for rel, n, sha in import_candidates():
+        rec = imports.get(rel)
+        if not rec or rec.get("sha") != sha:
+            todo.append((rel, n))
+    return todo
 
 
 def _sha_text(text):
@@ -1548,6 +1894,12 @@ def _note_text(full):
         text = open(full, encoding="utf-8", errors="replace").read()
     except OSError:
         return None
+    # YAML front matter (Claude Code memory files, .mdc rules) is metadata,
+    # not a note.
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            text = text[end + 4:]
     # The block is ours wherever it sits: CLAUDE.md, AGENTS.md, GEMINI.md or
     # copilot-instructions.md. A file holding nothing else is not a note.
     return BLOCK_RE.sub("\n", text)
@@ -1558,7 +1910,7 @@ def cmd_import(argv):
     imports = state.setdefault("imports", {})
     if "--mark" in argv:
         rel = argv[argv.index("--mark") + 1].replace("\\", "/")
-        full = os.path.join(ROOT, rel)
+        full = import_path(rel)
         if not os.path.isfile(full):
             sys.exit("no such file: %s" % rel)
         filed = int(argv[argv.index("--filed") + 1]) if "--filed" in argv else None
@@ -1621,7 +1973,7 @@ def git_hooks_dir():
     import subprocess
     try:
         p = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-path", "hooks"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
         if p.returncode == 0 and p.stdout.strip():
             d = p.stdout.strip()
             return d if os.path.isabs(d) else os.path.join(ROOT, d)
@@ -2174,6 +2526,12 @@ def main():
         return sort_rules()
     if cmd == "report":
         return report()
+    if cmd == "review":
+        return review()
+    if cmd == "stale":
+        return stale(args[1:])
+    if cmd == "dup":
+        return dup(args[1:])
     if cmd == "uninstall":
         return uninstall(args[1:])
     if cmd == "upgrade":

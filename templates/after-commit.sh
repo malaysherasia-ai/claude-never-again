@@ -37,9 +37,29 @@ NA_CLI="$NA_ROOT/.claude/never-again/na"
 [ -f "$NA_CLI" ] || exit 0
 
 if [ -n "$NA_TOOL_USE_ID" ]; then
-  "$NA_PY" "$NA_CLI" _proceeded --tool-use-id "$NA_TOOL_USE_ID" >/dev/null 2>&1
+  WENT="$("$NA_PY" "$NA_CLI" _proceeded --tool-use-id "$NA_TOOL_USE_ID" 2>/dev/null)"
 else
-  "$NA_PY" "$NA_CLI" _proceeded >/dev/null 2>&1
+  WENT="$("$NA_PY" "$NA_CLI" _proceeded 2>/dev/null)"
+fi
+WENT="${WENT//$'\r'/}"
+
+# A warning that the commit went past counts for nothing until it is
+# graded, and the agent that read the reason and made the diff is the one
+# who can grade it, now, once. One line back; the skill says what to do
+# with it. After a tool call only additionalContext reaches the model (a
+# systemMessage goes to the person), so Claude Code and Codex get that;
+# Gemini reads a systemMessage. Copilot has no channel after a tool, and
+# Antigravity has never been seen running this. A commit that failed
+# (this hook also runs on PostToolUseFailure) landed nothing to grade.
+case "$NA_PAYLOAD" in *PostToolUseFailure*) WENT="" ;; esac
+if [ -n "$WENT" ]; then
+  IDS="$(printf '%s' "$WENT" | tr '\n' ' ')"; IDS="${IDS% }"
+  MSG="never-again: $IDS warned and this commit went ahead. Grade it from the reason and the diff, once: .claude/never-again/na ok L### if the warning was right, na wrong L### if it was a false positive; leave it if unsure."
+  case "${NA_AGENT:-claude}" in
+    copilot|antigravity) ;;
+    gemini) printf '{"systemMessage":"%s"}\n' "$MSG" ;;
+    *) printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"%s"}}\n' "$MSG" ;;
+  esac
 fi
 
 # The commit is done, so this is the one place a network request costs
