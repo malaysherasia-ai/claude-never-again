@@ -50,10 +50,11 @@ na_native_path() {
 # NA_SOURCE and NA_PY. Returns 1 when no interpreter runs. na_begin calls
 # this; a hook that runs without a payload (a manual --run) calls it directly.
 # na_payload_vars PAYLOAD — the fields every runner's payload carries, as
-# shell assignments to eval: NA_CMD, NA_FILE, NA_TOOL_USE_ID, NA_CWD and
-# NA_AGENT. Claude Code, Codex, Gemini CLI, Copilot and Antigravity all hand a
-# hook one JSON object on stdin; only the field names differ. This is the one
-# place that knows them. NA_AGENT is kept when already set (the registered
+# shell assignments to eval: NA_CMD, NA_FILE, NA_TOOL_USE_ID, NA_CWD,
+# NA_AGENT and NA_ERROR (what a failed call said; empty otherwise). Claude
+# Code, Codex, Gemini CLI, Copilot and Antigravity all hand a hook one JSON
+# object on stdin; only the field names differ. This is the one place that
+# knows them. NA_AGENT is kept when already set (the registered
 # entry passes --agent) and guessed from the shape otherwise.
 na_payload_vars() {
   printf '%s' "$1" | "${NA_PY:-python3}" -c '
@@ -97,7 +98,14 @@ print("NA_TOOL_USE_ID=%s" % shlex.quote(first(d, ("tool_use_id", "toolCallId", "
 # Antigravity puts the working directory inside the tool arguments.
 print("NA_CWD=%s" % shlex.quote(first(d, ("cwd",)) or first(ti, ("Cwd",))))
 print("NA_AGENT=%s" % shlex.quote(agent))
-' "${NA_AGENT:-}" 2>/dev/null || printf 'NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""; NA_CWD=""; NA_AGENT=%s\n' "${NA_AGENT:-claude}"
+# After a failed call (PostToolUseFailure) the error is a string at the top;
+# after one that ran, the response may carry stderr. Bounded: it becomes one
+# argument on a command line, and a stack trace can run to a megabyte.
+tr = d.get("tool_response")
+err = first(d, ("error",)) or (tr if isinstance(tr, str) else "") \
+      or (first(tr, ("error", "stderr")) if isinstance(tr, dict) else "")
+print("NA_ERROR=%s" % shlex.quote(err[:2000]))
+' "${NA_AGENT:-}" 2>/dev/null || printf 'NA_CMD=""; NA_FILE=""; NA_TOOL_USE_ID=""; NA_CWD=""; NA_AGENT=%s; NA_ERROR=""\n' "${NA_AGENT:-claude}"
 }
 
 # na_root_from CWD — only Claude Code sets CLAUDE_PROJECT_DIR. Every other

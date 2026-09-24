@@ -220,6 +220,22 @@ When you see it, do one of two things and nothing else:
 Do not reword the commit message to get past it. `"capture": "off"` in
 `state.json` is the person's switch, not yours; `"block"` makes it refuse.
 
+The message is not the only witness. Every tool call of yours that fails is
+written down (`failures.log`: the command and the first line of its error),
+and when the same command passes after the tree changed, that is a fix
+whatever the commit message says. You get one line back at that moment:
+
+```
+never-again: `npm test` failed at 14:02 UTC (Error: expected 2 got 3) and passes now that the tree changed. ...
+```
+
+That is the cheapest moment to file: the error is in front of you and the
+diff is small. Run this skill from §1 then, with the error as the symptom.
+If you wait, the commit asks from the record instead, with the same
+command and error in the question. `.claude/never-again/na failures`
+prints everything since the last commit: fixed, still failing, and passed
+unchanged (a retry that worked, which is not a fix and is not asked about).
+
 A commit can also be refused because this repo runs an old release:
 
 ```
@@ -415,9 +431,10 @@ LESSONS.md                          the rules Claude reads (small, capped)
 .claude/hooks/na/na-lib.sh          shared by every hook: payload, mode, logging, decision
 .claude/hooks/na/na-verify.sh       the verify engine every verify hook sources
 .claude/hooks/na/na-manifest.py     what na-verify.sh compares the tree with
-.claude/hooks/na/_after.sh          records that a warned commit went ahead
-.claude/hooks/na/_capture.sh        asks when a fix is committed with no lesson filed
+.claude/hooks/na/_after.sh          records that a warned commit went ahead; writes failures.log
+.claude/hooks/na/_capture.sh        asks when a fix is committed with no lesson filed, by message or by record
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
 .claude/hooks/na/commit-msg         runs the capture check from git, where the message shows
 .claude/never-again/.capture-none   the `na none` mark: HEAD it was given for — local, gitignored
+.claude/never-again/failures.log    what failed under the agent and what passed after a change — local, gitignored
 ```

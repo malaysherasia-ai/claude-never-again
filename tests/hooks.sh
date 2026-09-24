@@ -451,6 +451,104 @@ check "amend from git: not asked again"       '[ $RC -eq 0 ] && ! echo "$ERR" | 
 rm -f "$CMSG"; : > "$LOG"
 
 echo
+echo "=== the failed call is the witness ==="
+# Claude Code reports a failed tool call (PostToolUseFailure) and a call
+# that ran (PostToolUse). The after-tool hook keeps failures.log from
+# them; the capture check asks from it. Every property here is a claim
+# in the README.
+FL=".claude/never-again/failures.log"; FOPEN=".claude/never-again/.failures-open"
+j() { "$PYBIN" -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1"; }
+failed() { printf '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":%s},"error":%s,"tool_use_id":"%s","cwd":"%s"}' "$(j "$1")" "$(j "$2")" "${3:-f1}" "$CWD" | bash .claude/hooks/na/_after.sh; }
+passed() { printf '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":%s},"tool_response":{"stdout":"ok","stderr":""},"tool_use_id":"%s","cwd":"%s"}' "$(j "$1")" "${2:-p1}" "$CWD" | bash .claude/hooks/na/_after.sh; }
+fln() { if [ -f "$FL" ]; then grep -c . "$FL" || true; else echo 0; fi; }
+fcol() { awk -F'\t' -v n="$1" 'END{print $n}' "$FL"; }
+rm -f "$FL" "$FOPEN"
+printf '#!/bin/sh\ntouch "%s/na-started"; exit 1\n' "$T" > "$T/fakepy"; chmod +x "$T/fakepy"
+rm -f "$T/na-started"
+printf '{"hook_event_name":"PostToolUse","tool_input":{"command":"npm test"}}' | NA_PYTHON="$T/fakepy" bash .claude/hooks/na/_after.sh >/dev/null 2>&1
+check "a pass with nothing open: no interpreter"   '[ ! -f "$T/na-started" ] && [ ! -f "$FL" ]'
+check "a failed test run is written down"         '[ -z "$(failed "npm test" "Exit code 1
+Error: expected 2 got 3
+    at t.js:4")" ] && [ "$(fln)" -eq 1 ] && [ "$(fcol 2)" = fail ] && [ "$(fcol 6)" = "npm test" ] && [ "$(fcol 7)" = "Error: expected 2 got 3" ]'
+check "the open mark is set"                      '[ -f "$FOPEN" ]'
+check "grep with no match is not a failure"       'failed "grep -q marker a.txt" "Exit code 1" >/dev/null; [ "$(fln)" -eq 1 ]'
+check "git diff --quiet is not a failure"         'failed "git diff --quiet && echo same" "Exit code 1" >/dev/null; [ "$(fln)" -eq 1 ]'
+check "a chain with a real command is written"    'failed "cd api && npm run build" "Exit code 2
+src/x.ts(4,3): error TS2322" f2 >/dev/null; [ "$(fln)" -eq 2 ] && [ "$(fcol 7)" = "src/x.ts(4,3): error TS2322" ]'
+BIGERR="$("$PYBIN" -c 'print("E" * 5000)')"
+failed "pytest -q" "$BIGERR" >/dev/null; ERRL="$(fcol 7)"
+check "a huge error is cut to one bounded line"   '[ "$(fln)" -eq 3 ] && [ "${#ERRL}" -le 160 ] && [ "${#ERRL}" -gt 100 ]'
+check "na failures: still failing"                '"$PYBIN" $NA failures | grep -q "still failing" && "$PYBIN" $NA failures | grep -q "npm test"'
+check "an open failure alone: a plain commit is silent" '[ -z "$(cap "git commit -m \"add the footer\"")" ]'
+check "a failed commit is not a failure"          'failed "git commit -m x" "hook denied" >/dev/null; [ "$(fln)" -eq 3 ]'
+check "dry run writes nothing"                    'NA_DRY_RUN=1 failed "make" "Exit code 2" >/dev/null; [ "$(fln)" -eq 3 ]'
+check "same command, tree unchanged: flaky, silent" '[ -z "$(passed "npm test")" ] && [ "$(fcol 2)" = flaky ]'
+failed "npm test" "Exit code 1
+Error: expected 2 got 3" f3 >/dev/null
+echo changed >> cap.txt
+OUTP="$(passed "npm test" p3)"
+check "same command after the tree changed: fixed" '[ "$(fcol 2)" = fixed ]'
+check "the note reaches the model"                'echo "$OUTP" | grep -q additionalContext && echo "$OUTP" | grep -q "npm test" && echo "$OUTP" | grep -q "expected 2 got 3"'
+check "the note is valid JSON"                    'echo "$OUTP" | "$PYBIN" -c "import json,sys; json.load(sys.stdin)"'
+check "the mark stays while another is open"      '[ -f "$FOPEN" ]'
+# Claude Code on Windows sets CLAUDE_PROJECT_DIR with backslashes; the gate
+# is one file test on that string and must open for that shape.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    WINP="$(printf '%s' "$T" | sed 's,/,\\,g')"
+    rm -f "$T/na-started"
+    printf '{"hook_event_name":"PostToolUse","tool_input":{"command":"ls -z"}}' | CLAUDE_PROJECT_DIR="$WINP" NA_PYTHON="$T/fakepy" bash .claude/hooks/na/_after.sh >/dev/null 2>&1
+    check "a backslash project dir reaches the pass path" '[ -f "$T/na-started" ]'
+    rm -f "$T/na-started" ;;
+  *) ok "a backslash project dir reaches the pass path (a Windows shape; not run here)" ;;
+esac
+echo more >> cap.txt
+passed "cd api && npm run build" p4 >/dev/null; passed "pytest -q" p5 >/dev/null
+check "the mark clears once nothing is open"      '[ ! -f "$FOPEN" ]'
+check "na failures: fixed, with the error"        '"$PYBIN" $NA failures | grep -q "fixed  (3" && "$PYBIN" $NA failures | grep -q "expected 2 got 3"'
+check "na counts fixed, unfiled"                  '"$PYBIN" $NA | grep -q "fixed, unfiled  3"'
+check "na review lists them"                      '"$PYBIN" $NA review | grep -q "fixed since the last commit  (3"'
+# The question names the most recent fix (pytest here) and counts the rest.
+OUTQ="$(cap "git commit -m \"add the footer\"")"
+check "capture asks from the record on a plain message" 'echo "$OUTQ" | grep -q "\"ask\"" && echo "$OUTQ" | grep -q "by the record" && echo "$OUTQ" | grep -q "pytest -q" && echo "$OUTQ" | grep -q "and 2 more"'
+check "a fix message and the record: both named" 'cap "git commit -m \"fix the footer\"" | grep -q "the record agrees"'
+check "git side: commit-msg asks from the record" 'gitcap "add the footer" | grep -q "by the record"'
+mkdir -p .claude/never-again/archive && echo story > .claude/never-again/archive/L051.md
+check "a lesson in the commit answers it"         '[ -z "$(cap "git add -A && git commit -m \"add the footer\"")" ]'
+rm -f .claude/never-again/archive/L051.md
+check "na none answers it"                        '"$PYBIN" $NA none "flaky suite" >/dev/null && [ -z "$(cap "git commit -m \"add the footer\"")" ] && [ -z "$(gitcap "add the footer")" ]'
+git add cap.txt && git commit -qm "cap again" 2>/dev/null
+check "once the commit lands, the record is behind it" '[ -z "$(cap "git commit -m \"add the footer\"")" ] && "$PYBIN" $NA failures | grep -q "nothing since the last commit"'
+failed "pytest -q" "Exit code 1
+E   assert 1 == 2" f6 >/dev/null
+git commit -q --allow-empty -m "empty" 2>/dev/null
+check "an open failure survives an unrelated commit" '[ -f "$FOPEN" ] && [ -z "$(passed "ls -la")" ] && [ -f "$FOPEN" ] && "$PYBIN" $NA failures | grep -q "still failing"'
+echo later >> cap.txt
+OUTP="$(passed "pytest -q" p6)"
+check "and its fix after that commit is matched"  'echo "$OUTP" | grep -q "assert 1 == 2" && [ ! -f "$FOPEN" ] && cap "git commit -m \"add the footer\"" | grep -q "by the record"'
+check "na none silences the counts too"           '"$PYBIN" $NA none "one-off" >/dev/null && ! "$PYBIN" $NA | grep -q "fixed, unfiled" && ! "$PYBIN" $NA review | grep -q "fixed since" && "$PYBIN" $NA failures | grep -q "answered for the next commit"'
+git add cap.txt && git commit -qm "cap later" 2>/dev/null
+OLD="$("$PYBIN" -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 90000)))')"
+printf '%s\tfail\tdeadbeef00\t-\t-\told-suite\tError: old\t-\n' "$OLD" >> "$FL"; : > "$FOPEN"
+check "a failure nothing passed after in a day is forgotten" '[ -z "$(passed "ls -la")" ] && [ ! -f "$FOPEN" ] && ! "$PYBIN" $NA failures | grep -q "old-suite"'
+check "a quoted pipe in a quiet command is not a failure" 'failed "grep -q '"'"'a | b'"'"' cap.txt" "Exit code 1" >/dev/null; ! grep -q "grep -q" "$FL"'
+check "a heredoc body is not a command"           'failed "cat > x.txt <<'"'"'EOF'"'"'
+run: make | tee log
+EOF" "Exit code 1" >/dev/null; ! grep -q "tee log" "$FL"'
+check "the error line is the error, not the banner" 'failed "npm run check" "Exit code 1
+> app@1.0.0 check
+> jest
+FAIL src/x.test.js
+  ● expected 2 got 3" f7 >/dev/null; [ "$(fcol 7)" = "FAIL src/x.test.js" ]'
+passed "npm run check" p7 >/dev/null
+check "a retry with the tree unchanged closes it"  '[ "$(fcol 2)" = flaky ] && [ ! -f "$FOPEN" ]'
+check "the record is ignored by git"              'git check-ignore -q "$FL" && git check-ignore -q "$FOPEN"'
+rm -f "$T/na-started"
+printf '{"hook_event_name":"PostToolUse","tool_input":{"command":"ls"}}' | NA_PYTHON="$T/fakepy" bash .claude/hooks/na/_after.sh >/dev/null 2>&1
+check "with nothing open, ordinary calls are quiet again" '[ ! -f "$T/na-started" ]'
+rm -f "$T/fakepy" "$T/na-started" "$FL" "$FOPEN" "$CMSG"; : > "$LOG"
+
+echo
 echo "=== retire stops the cost ==="
 "$PYBIN" $NA retire L001 >/dev/null
 check "deregistered from settings.json"   '! grep -q "L001.sh" .claude/settings.json'

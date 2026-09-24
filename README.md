@@ -171,6 +171,23 @@ It is the one part of the loop that used to depend on the agent reading
 `CLAUDE.md`, and the field showed what that was worth: four real lessons sat
 in a repo until someone typed a prompt asking for them.
 
+The message is not the only witness, because the agent writes the message.
+Claude Code reports every tool call that fails; the after-tool hook writes
+the command and the first line of its error to `failures.log`. When the
+same command passes after the tree changed, that is a fix by any name: the
+agent gets one line back while the error is still in front of it, and the
+commit is asked from the record whatever its message says:
+
+```
+never-again capture asks: this commit carries a fix by the record (`npm test` failed
+(Error: expected 2 got 3) and passed after the tree changed) and files no lesson. ...
+```
+
+`na failures` prints the record since the last commit. A `grep` that found
+nothing or a `test -f` that said no is an answer, not a failure, and is not
+written. The check costs nothing on an ordinary call: one file test, and
+the file exists only while a failure is open.
+
 **2. It sorts the lesson.** Four options, first fit wins:
 
 | | | |
@@ -444,7 +461,7 @@ CLAUDE.md                           one marked block added at the end; never ove
 .claude/hooks/na/dispatch           the one registered hook: runs the others from na index
 .claude/hooks/na/na-lib.sh          shared by every hook
 .claude/hooks/na/na-verify.sh       the "X must pass before commit" engine, plus na-manifest.py
-.claude/hooks/na/_after.sh          records that a warned commit went ahead
+.claude/hooks/na/_after.sh          records that a warned commit went ahead, and what failed and then passed
 .claude/hooks/na/_capture.sh        asks when a fix is committed with no lesson filed
 .claude/hooks/na/pre-commit         runs commit hooks from git itself
 .claude/hooks/na/commit-msg         runs the capture check from git, where the message shows
@@ -465,6 +482,7 @@ AGENTS.md, GEMINI.md,
   ├── verified/                     one record per verify hook; local, gitignored
   ├── fires.log                     every fire, its outcome and grade; local, gitignored
   ├── calls.log                     one line per commit the dispatcher saw; local, gitignored
+  ├── failures.log                  what failed under the agent, and what passed after a change; local, gitignored
   ├── .capture-none                 the `na none` mark, cleared by the next commit; local, gitignored
   └── .update-check                 the once-a-day release check; local, gitignored
 ```
